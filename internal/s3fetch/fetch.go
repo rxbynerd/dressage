@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"strings"
 	"time"
 
@@ -42,7 +43,8 @@ func New(client *s3.Client, bucket, prefix string) *Fetcher {
 
 // Fetch lists all .json.gz log files under the configured prefix, optionally
 // filtered to the [start, end) time range, then downloads, decompresses, and
-// parses each file into InvocationLog records.
+// parses each file into InvocationLog records. Overflow payloads referenced
+// via inputBodyS3Path/outputBodyS3Path are fetched and inlined.
 func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.InvocationLog, error) {
 	keys, err := f.listLogFiles(ctx)
 	if err != nil {
@@ -68,11 +70,41 @@ func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.Invo
 		allLogs = append(allLogs, records...)
 	}
 
-	log.Printf("Parsed %d records", len(allLogs))
+	// Resolve overflow S3 path references for input/output bodies.
+	resolved := 0
+	for i := range allLogs {
+		if allLogs[i].Input.InputBodyS3Path != "" && len(allLogs[i].Input.InputBodyJSON) == 0 {
+			data, err := f.fetchS3Path(ctx, allLogs[i].Input.InputBodyS3Path)
+			if err != nil {
+				log.Printf("Warning: failed to fetch input body for %s: %v", allLogs[i].RequestID, err)
+			} else {
+				allLogs[i].Input.InputBodyJSON = data
+				resolved++
+			}
+		}
+		if allLogs[i].Output.OutputBodyS3Path != "" && len(allLogs[i].Output.OutputBodyJSON) == 0 {
+			data, err := f.fetchS3Path(ctx, allLogs[i].Output.OutputBodyS3Path)
+			if err != nil {
+				log.Printf("Warning: failed to fetch output body for %s: %v", allLogs[i].RequestID, err)
+			} else {
+				allLogs[i].Output.OutputBodyJSON = data
+				resolved++
+			}
+		}
+	}
+
+	log.Printf("Parsed %d records (%d overflow payloads resolved)", len(allLogs), resolved)
 	return allLogs, nil
 }
 
-// listLogFiles pages through S3 and returns all keys ending in .json.gz.
+// isDataFile returns true if the key is under a data/ subdirectory,
+// which contains overflow payload files rather than log records.
+func isDataFile(key string) bool {
+	return strings.Contains(key, "/data/")
+}
+
+// listLogFiles pages through S3 and returns all keys ending in .json.gz,
+// excluding data/ overflow payload files.
 func (f *Fetcher) listLogFiles(ctx context.Context) ([]string, error) {
 	var keys []string
 	var continuationToken *string
@@ -91,7 +123,7 @@ func (f *Fetcher) listLogFiles(ctx context.Context) ([]string, error) {
 
 		for _, obj := range output.Contents {
 			key := aws.ToString(obj.Key)
-			if strings.HasSuffix(key, ".json.gz") {
+			if strings.HasSuffix(key, ".json.gz") && !isDataFile(key) {
 				keys = append(keys, key)
 			}
 		}
@@ -165,6 +197,52 @@ func (f *Fetcher) downloadAndParse(ctx context.Context, key string) ([]model.Inv
 	defer gz.Close()
 
 	return parseNDJSON(gz)
+}
+
+// fetchS3Path downloads a gzipped JSON file from an s3:// URI and returns its raw contents.
+func (f *Fetcher) fetchS3Path(ctx context.Context, s3Path string) (json.RawMessage, error) {
+	bucket, key, err := parseS3URI(s3Path)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := f.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("downloading %s: %w", s3Path, err)
+	}
+	defer output.Body.Close()
+
+	var reader io.Reader = output.Body
+	if strings.HasSuffix(key, ".gz") {
+		gz, err := gzip.NewReader(output.Body)
+		if err != nil {
+			return nil, fmt.Errorf("opening gzip reader for %s: %w", s3Path, err)
+		}
+		defer gz.Close()
+		reader = gz
+	}
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", s3Path, err)
+	}
+
+	return json.RawMessage(data), nil
+}
+
+// parseS3URI parses an s3://bucket/key URI into its bucket and key components.
+func parseS3URI(s3URI string) (bucket, key string, err error) {
+	u, err := url.Parse(s3URI)
+	if err != nil {
+		return "", "", fmt.Errorf("parsing S3 URI %q: %w", s3URI, err)
+	}
+	if u.Scheme != "s3" {
+		return "", "", fmt.Errorf("expected s3:// URI, got %q", s3URI)
+	}
+	return u.Host, strings.TrimPrefix(u.Path, "/"), nil
 }
 
 // parseNDJSON reads newline-delimited JSON from r and returns the parsed logs.

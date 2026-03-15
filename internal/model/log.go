@@ -31,8 +31,11 @@ type Identity struct {
 }
 
 // InvocationInput contains the request payload and metadata.
+// When the input body exceeds 100KB, AWS stores it in a separate S3 object
+// and populates InputBodyS3Path instead of InputBodyJSON.
 type InvocationInput struct {
 	InputBodyJSON             json.RawMessage `json:"inputBodyJson"`
+	InputBodyS3Path           string          `json:"inputBodyS3Path,omitempty"`
 	InputContentType          string          `json:"inputContentType"`
 	InputTokenCount           int64           `json:"inputTokenCount"`
 	CacheReadInputTokenCount  int64           `json:"cacheReadInputTokenCount,omitempty"`
@@ -40,10 +43,13 @@ type InvocationInput struct {
 }
 
 // InvocationOutput contains the response payload and metadata.
+// When the output body exceeds 100KB, AWS stores it in a separate S3 object
+// and populates OutputBodyS3Path instead of OutputBodyJSON.
 type InvocationOutput struct {
-	OutputBodyJSON  json.RawMessage `json:"outputBodyJson"`
-	OutputContentType string        `json:"outputContentType"`
-	OutputTokenCount  int64         `json:"outputTokenCount"`
+	OutputBodyJSON    json.RawMessage `json:"outputBodyJson"`
+	OutputBodyS3Path  string          `json:"outputBodyS3Path,omitempty"`
+	OutputContentType string          `json:"outputContentType"`
+	OutputTokenCount  int64           `json:"outputTokenCount"`
 }
 
 // PerformanceConfig contains performance-related metadata.

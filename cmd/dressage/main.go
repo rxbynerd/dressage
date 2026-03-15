@@ -18,6 +18,9 @@ import (
 
 const dateFormat = "2006-01-02"
 
+// version is set at build time via -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
 	var (
 		bucket  string
@@ -30,8 +33,9 @@ func main() {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "dressage",
-		Short: "Analyze AWS Bedrock model invocation logs",
+		Use:     "dressage",
+		Short:   "Analyze AWS Bedrock model invocation logs",
+		Version: version,
 		Long: `Dressage fetches Bedrock model invocation logs from an S3 bucket,
 groups them into conversations, and generates a self-contained HTML report
 for analyzing coding harness behaviour over the wire.`,

@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bedrock Invocation Log Report</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #fff;
+    --border: #e0e0e0;
+    --text: #1a1a1a;
+    --text-muted: #666;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --error: #dc2626;
+    --error-light: #fef2f2;
+    --success: #16a34a;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; }
+  h2 { font-size: 1.2rem; font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+
+  .header {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .header h1 { margin-bottom: 0.75rem; }
+  .meta { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem; }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+  }
+  .stat-card {
+    background: var(--accent-light);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+  }
+  .stat-card .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; color: var(--accent); font-family: var(--mono); }
+  .stat-card.error .value { color: var(--error); }
+  .stat-card.error { background: var(--error-light); }
+
+  .breakdown {
+    margin-top: 1rem;
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+  .breakdown-section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
+  .breakdown-list { list-style: none; font-size: 0.875rem; }
+  .breakdown-list li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.1rem 0; }
+  .breakdown-list .count { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+
+  details { margin-bottom: 0.5rem; }
+  details > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+
+  .day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+  }
+  .day-header {
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .day-header .arrow {
+    transition: transform 0.2s;
+    margin-right: 0.5rem;
+    display: inline-block;
+  }
+  details[open] > summary .arrow { transform: rotate(90deg); }
+  .day-date { font-weight: 600; font-size: 1.1rem; }
+  .day-stats {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .day-stats span { font-family: var(--mono); color: var(--text); font-weight: 500; }
+  .day-body { padding: 0 1.5rem 1rem; }
+
+  .conv-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  .conv-header {
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+  .conv-id { font-family: var(--mono); font-weight: 600; font-size: 0.8rem; }
+  .conv-model {
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
+  .conv-stats {
+    display: flex;
+    gap: 1rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+  .conv-stats span { font-family: var(--mono); color: var(--text); }
+  .conv-body { padding: 0 1rem 0.75rem; }
+
+  .invocation {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .inv-header {
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    background: #f8f8f8;
+    border-radius: 4px 4px 0 0;
+  }
+  .inv-meta { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+  .inv-time { font-family: var(--mono); color: var(--text-muted); }
+  .inv-op {
+    background: #f0fdf4;
+    color: var(--success);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+  .inv-status { font-family: var(--mono); }
+  .inv-status.error { color: var(--error); font-weight: 600; }
+  .inv-status.ok { color: var(--success); }
+  .inv-tokens { font-family: var(--mono); color: var(--text-muted); }
+  .inv-body { padding: 0.5rem 0.75rem; }
+  .inv-section { margin-bottom: 0.5rem; }
+  .inv-section-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+  }
+  pre.json {
+    background: #f5f5f5;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .empty { color: var(--text-muted); font-style: italic; padding: 2rem; text-align: center; }
+
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .day-header { flex-direction: column; align-items: flex-start; }
+    .day-stats { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Bedrock Invocation Log Report</h1>
+  <div class="meta">
+    Generated {{.GeneratedAt.Format "2006-01-02 15:04:05 MST"}}
+    {{if not .DateRange.Start.IsZero}} &middot; {{.DateRange.Start.Format "2006-01-02"}} to {{.DateRange.End.Format "2006-01-02"}}{{end}}
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Invocations</div>
+      <div class="value">{{.TotalStats.InvocationCount}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Input Tokens</div>
+      <div class="value">{{formatInt .TotalStats.InputTokens}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Output Tokens</div>
+      <div class="value">{{formatInt .TotalStats.OutputTokens}}</div>
+    </div>
+    <div class="stat-card{{if gt .TotalStats.ErrorCount 0}} error{{end}}">
+      <div class="label">Errors</div>
+      <div class="value">{{.TotalStats.ErrorCount}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Days</div>
+      <div class="value">{{len .Days}}</div>
+    </div>
+  </div>
+  {{if or .TotalStats.ModelBreakdown .TotalStats.OpBreakdown}}
+  <div class="breakdown">
+    {{if .TotalStats.ModelBreakdown}}
+    <div class="breakdown-section">
+      <h3>By Model</h3>
+      <ul class="breakdown-list">
+        {{range $model, $count := .TotalStats.ModelBreakdown}}
+        <li><span>{{$model}}</span> <span class="count">{{$count}}</span></li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+    {{if .TotalStats.OpBreakdown}}
+    <div class="breakdown-section">
+      <h3>By Operation</h3>
+      <ul class="breakdown-list">
+        {{range $op, $count := .TotalStats.OpBreakdown}}
+        <li><span>{{$op}}</span> <span class="count">{{$count}}</span></li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+{{if not .Days}}
+<div class="empty">No invocation logs found for the specified period.</div>
+{{end}}
+
+{{range .Days}}
+<details class="day-card">
+  <summary class="day-header">
+    <div>
+      <span class="arrow">&#9654;</span>
+      <span class="day-date">{{.Date.Format "2006-01-02"}}</span>
+    </div>
+    <div class="day-stats">
+      <div>Invocations: <span>{{.Stats.InvocationCount}}</span></div>
+      <div>In: <span>{{formatInt .Stats.InputTokens}}</span></div>
+      <div>Out: <span>{{formatInt .Stats.OutputTokens}}</span></div>
+      {{if gt .Stats.ErrorCount 0}}<div>Errors: <span style="color:var(--error)">{{.Stats.ErrorCount}}</span></div>{{end}}
+      <div>Conversations: <span>{{len .Conversations}}</span></div>
+    </div>
+  </summary>
+  <div class="day-body">
+    {{range .Conversations}}
+    <details class="conv-card">
+      <summary class="conv-header">
+        <div class="inv-meta">
+          <span class="arrow">&#9654;</span>
+          <span class="conv-id">{{.ID}}</span>
+          <span class="conv-model">{{.ModelID}}</span>
+        </div>
+        <div class="conv-stats">
+          <div>Messages: <span>{{.MessageCount}}</span></div>
+          <div>In: <span>{{formatInt .InputTokens}}</span></div>
+          <div>Out: <span>{{formatInt .OutputTokens}}</span></div>
+          <div>{{.StartTime.Format "15:04:05"}} &ndash; {{.EndTime.Format "15:04:05"}}</div>
+        </div>
+      </summary>
+      <div class="conv-body">
+        {{range .Invocations}}
+        <details class="invocation">
+          <summary class="inv-header">
+            <div class="inv-meta">
+              <span class="arrow">&#9654;</span>
+              <span class="inv-time">{{.Timestamp.Format "15:04:05"}}</span>
+              <span class="inv-op">{{.Operation}}</span>
+              <span class="inv-status {{if eq .Status "success"}}ok{{else}}error{{end}}">{{.Status}}{{if .ErrorCode}} ({{.ErrorCode}}){{end}}</span>
+            </div>
+            <div class="inv-tokens">in:{{formatInt .InputTokens}} out:{{formatInt .OutputTokens}}</div>
+          </summary>
+          <div class="inv-body">
+            <div class="inv-section">
+              <div class="inv-section-label">Request ({{.RequestID}})</div>
+              <pre class="json">{{.InputBody}}</pre>
+            </div>
+            <div class="inv-section">
+              <div class="inv-section-label">Response</div>
+              <pre class="json">{{.OutputBody}}</pre>
+            </div>
+          </div>
+        </details>
+        {{end}}
+      </div>
+    </details>
+    {{end}}
+  </div>
+</details>
+{{end}}
+
+</body>
+</html>

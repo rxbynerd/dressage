@@ -36,6 +36,7 @@ type DaySummary struct {
 // ConversationSummary groups related invocations into a logical conversation.
 type ConversationSummary struct {
 	ID           string
+	SessionID    string // Claude Code session UUID (from metadata.user_id)
 	ModelID      string
 	IdentityARN  string
 	StartTime    time.Time
@@ -45,6 +46,7 @@ type ConversationSummary struct {
 	OutputTokens int64
 	ErrorCount   int
 	Invocations  []Invocation
+	Detail       *ConversationDetail // reconstructed conversation (nil if not available)
 }
 
 // Invocation is a single request/response pair, ready for display.

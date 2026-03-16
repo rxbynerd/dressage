@@ -5,9 +5,11 @@ package summary
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 	"time"
 
+	"github.com/rubynerd/dressage/internal/conversation"
 	"github.com/rubynerd/dressage/internal/model"
 )
 
@@ -96,18 +98,79 @@ type groupKey struct {
 	IdentityARN string
 }
 
-// buildConversations groups a day's logs into conversations using the
-// (modelId, identityARN) heuristic with a 5-minute gap threshold.
-// It returns the conversation summaries and the next global conversation index.
+// buildConversations groups a day's logs into conversations.
+// It first attempts session-based grouping using the session ID extracted from
+// inputBodyJson metadata (used by Claude Code). Logs without session IDs fall
+// back to the (modelId, identityARN) + 5-minute gap heuristic.
 func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
-	// Group by (modelId, identityARN).
-	groups := make(map[groupKey][]model.InvocationLog)
-	for _, log := range dayLogs {
-		k := groupKey{ModelID: log.ModelID, IdentityARN: log.Identity.ARN}
-		groups[k] = append(groups[k], log)
+	// Partition logs: those with session IDs vs those without.
+	sessionGroups := make(map[string][]model.InvocationLog)
+	var noSessionLogs []model.InvocationLog
+
+	for _, lg := range dayLogs {
+		sid := conversation.ExtractSessionID(lg.Input.InputBodyJSON)
+		if sid != "" {
+			sessionGroups[sid] = append(sessionGroups[sid], lg)
+		} else {
+			noSessionLogs = append(noSessionLogs, lg)
+		}
 	}
 
-	// Deterministic ordering: sort group keys.
+	convIndex := startIndex
+	var conversations []model.ConversationSummary
+
+	// Process session-based groups.
+	sessionIDs := make([]string, 0, len(sessionGroups))
+	for sid := range sessionGroups {
+		sessionIDs = append(sessionIDs, sid)
+	}
+	sort.Strings(sessionIDs)
+
+	for _, sid := range sessionIDs {
+		groupLogs := sessionGroups[sid]
+		sort.Slice(groupLogs, func(i, j int) bool {
+			return groupLogs[i].Timestamp.Before(groupLogs[j].Timestamp)
+		})
+
+		convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
+		convIndex++
+		cs := buildConversationSummary(convID, groupLogs)
+		cs.SessionID = sid
+
+		// Attempt full conversation reconstruction.
+		detail := conversation.Reconstruct(groupLogs)
+		if detail != nil {
+			cs.Detail = detail
+			log.Printf("Reconstructed conversation %s: %d turns, session %s",
+				convID, len(detail.Turns), sid[:8])
+		}
+		conversations = append(conversations, cs)
+	}
+
+	// Process remaining logs without session IDs using the time-gap heuristic.
+	if len(noSessionLogs) > 0 {
+		gapConvs, nextIdx := buildConversationsTimeBased(noSessionLogs, dayKey, convIndex)
+		conversations = append(conversations, gapConvs...)
+		convIndex = nextIdx
+	}
+
+	// Sort conversations by start time for consistent display.
+	sort.Slice(conversations, func(i, j int) bool {
+		return conversations[i].StartTime.Before(conversations[j].StartTime)
+	})
+
+	return conversations, convIndex
+}
+
+// buildConversationsTimeBased groups logs using the (modelId, identityARN) +
+// 5-minute gap heuristic. This is the fallback for logs without session IDs.
+func buildConversationsTimeBased(dayLogs []model.InvocationLog, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
+	groups := make(map[groupKey][]model.InvocationLog)
+	for _, lg := range dayLogs {
+		k := groupKey{ModelID: lg.ModelID, IdentityARN: lg.Identity.ARN}
+		groups[k] = append(groups[k], lg)
+	}
+
 	keys := make([]groupKey, 0, len(groups))
 	for k := range groups {
 		keys = append(keys, k)
@@ -124,36 +187,26 @@ func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex
 
 	for _, k := range keys {
 		groupLogs := groups[k]
-		// Already sorted by timestamp from the parent sort, but sort within
-		// group to be safe.
 		sort.Slice(groupLogs, func(i, j int) bool {
 			return groupLogs[i].Timestamp.Before(groupLogs[j].Timestamp)
 		})
 
-		// Split into conversations at gaps > 5 minutes.
 		var conv []model.InvocationLog
-		for i, log := range groupLogs {
-			if i > 0 && log.Timestamp.Sub(groupLogs[i-1].Timestamp) > conversationGap {
-				// Flush current conversation.
+		for i, lg := range groupLogs {
+			if i > 0 && lg.Timestamp.Sub(groupLogs[i-1].Timestamp) > conversationGap {
 				convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
 				convIndex++
 				conversations = append(conversations, buildConversationSummary(convID, conv))
 				conv = nil
 			}
-			conv = append(conv, log)
+			conv = append(conv, lg)
 		}
-		// Flush final conversation in this group.
 		if len(conv) > 0 {
 			convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
 			convIndex++
 			conversations = append(conversations, buildConversationSummary(convID, conv))
 		}
 	}
-
-	// Sort conversations by start time for consistent display.
-	sort.Slice(conversations, func(i, j int) bool {
-		return conversations[i].StartTime.Before(conversations[j].StartTime)
-	})
 
 	return conversations, convIndex
 }

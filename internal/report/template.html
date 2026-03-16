@@ -16,6 +16,11 @@
     --error: #dc2626;
     --error-light: #fef2f2;
     --success: #16a34a;
+    --success-light: #f0fdf4;
+    --purple: #7c3aed;
+    --purple-light: #f5f3ff;
+    --amber: #d97706;
+    --amber-light: #fffbeb;
     --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
@@ -130,6 +135,14 @@
     font-size: 0.75rem;
     font-family: var(--mono);
   }
+  .conv-session {
+    background: var(--purple-light);
+    color: var(--purple);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
   .conv-stats {
     display: flex;
     gap: 1rem;
@@ -139,6 +152,201 @@
   .conv-stats span { font-family: var(--mono); color: var(--text); }
   .conv-body { padding: 0 1rem 0.75rem; }
 
+  /* Conversation chat view */
+  .chat-container { margin-bottom: 1rem; }
+
+  .chat-section {
+    margin-bottom: 0.5rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+  }
+  .chat-section summary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: #f8f8f8;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .chat-section[open] summary { border-radius: 6px 6px 0 0; }
+  .chat-section .section-body {
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-radius: 0 0 6px 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    line-height: 1.4;
+  }
+
+  .tool-list {
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-radius: 0 0 6px 6px;
+  }
+  .tool-list-item {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+    font-size: 0.8rem;
+  }
+  .tool-list-name {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--purple);
+    white-space: nowrap;
+  }
+  .tool-list-desc {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-msg {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .chat-msg.user {
+    background: var(--accent-light);
+    border-left: 3px solid var(--accent);
+  }
+  .chat-msg.assistant {
+    background: var(--success-light);
+    border-left: 3px solid var(--success);
+  }
+  .chat-role {
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+  }
+  .chat-msg.user .chat-role { color: var(--accent); }
+  .chat-msg.assistant .chat-role { color: var(--success); }
+
+  .content-block { margin-bottom: 0.4rem; }
+  .content-block:last-child { margin-bottom: 0; }
+
+  .block-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .block-thinking {
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+  }
+  .block-thinking summary {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .block-thinking .thinking-content {
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .block-tool {
+    background: #f8f8f8;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+  }
+  .block-tool summary {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .block-tool .tool-badge {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--purple);
+    font-size: 0.75rem;
+  }
+  .block-tool .tool-id {
+    font-family: var(--mono);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
+  .block-tool .tool-body {
+    padding: 0.4rem 0.6rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+
+  .block-result {
+    background: #fefefe;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+  }
+  .block-result.error-result {
+    border-color: var(--error);
+    background: var(--error-light);
+  }
+  .block-result summary {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .block-result .result-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .block-result.error-result .result-label { color: var(--error); }
+  .block-result .result-body {
+    padding: 0.4rem 0.6rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+
+  .turn-metrics {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed var(--border);
+  }
+  .turn-metrics .metric-label { color: var(--text-muted); }
+  .turn-metrics .metric-value { color: var(--text); font-weight: 500; }
+
+  /* Existing invocation detail view */
   .invocation {
     border: 1px solid var(--border);
     border-radius: 4px;
@@ -196,6 +404,15 @@
 
   .empty { color: var(--text-muted); font-style: italic; padding: 2rem; text-align: center; }
 
+  .section-divider {
+    margin: 0.75rem 0;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
   @media (max-width: 768px) {
     body { padding: 1rem; }
     .stats-grid { grid-template-columns: repeat(2, 1fr); }
@@ -241,7 +458,7 @@
       <h3>By Model</h3>
       <ul class="breakdown-list">
         {{range $model, $count := .TotalStats.ModelBreakdown}}
-        <li><span>{{$model}}</span> <span class="count">{{$count}}</span></li>
+        <li><span>{{shortModel $model}}</span> <span class="count">{{$count}}</span></li>
         {{end}}
       </ul>
     </div>
@@ -265,7 +482,7 @@
 {{end}}
 
 {{range .Days}}
-<details class="day-card">
+<details class="day-card" open>
   <summary class="day-header">
     <div>
       <span class="arrow">&#9654;</span>
@@ -286,39 +503,131 @@
         <div class="inv-meta">
           <span class="arrow">&#9654;</span>
           <span class="conv-id">{{.ID}}</span>
-          <span class="conv-model">{{.ModelID}}</span>
+          <span class="conv-model">{{shortModel .ModelID}}</span>
+          {{if .SessionID}}<span class="conv-session">session:{{shortSession .SessionID}}</span>{{end}}
         </div>
         <div class="conv-stats">
-          <div>Messages: <span>{{.MessageCount}}</span></div>
+          <div>{{if .Detail}}Turns: <span>{{len .Detail.Turns}}</span>{{else}}Messages: <span>{{.MessageCount}}</span>{{end}}</div>
+          <div>Invocations: <span>{{.MessageCount}}</span></div>
           <div>In: <span>{{formatInt .InputTokens}}</span></div>
           <div>Out: <span>{{formatInt .OutputTokens}}</span></div>
           <div>{{.StartTime.Format "15:04:05"}} &ndash; {{.EndTime.Format "15:04:05"}}</div>
         </div>
       </summary>
       <div class="conv-body">
-        {{range .Invocations}}
-        <details class="invocation">
-          <summary class="inv-header">
-            <div class="inv-meta">
-              <span class="arrow">&#9654;</span>
-              <span class="inv-time">{{.Timestamp.Format "15:04:05"}}</span>
-              <span class="inv-op">{{.Operation}}</span>
-              <span class="inv-status {{if eq .Status "success"}}ok{{else}}error{{end}}">{{.Status}}{{if .ErrorCode}} ({{.ErrorCode}}){{end}}</span>
+
+        {{if .Detail}}
+        <!-- Reconstructed Conversation View -->
+        <div class="chat-container">
+
+          {{if .Detail.SystemPrompt}}
+          <details class="chat-section">
+            <summary><span class="arrow">&#9654;</span> System Prompt ({{len .Detail.SystemPrompt}} chars)</summary>
+            <div class="section-body">{{.Detail.SystemPrompt}}</div>
+          </details>
+          {{end}}
+
+          {{if .Detail.Tools}}
+          <details class="chat-section">
+            <summary><span class="arrow">&#9654;</span> Available Tools ({{len .Detail.Tools}})</summary>
+            <div class="tool-list">
+              {{range .Detail.Tools}}
+              <div class="tool-list-item">
+                <span class="tool-list-name">{{.Name}}</span>
+                <span class="tool-list-desc">{{.Description}}</span>
+              </div>
+              {{end}}
             </div>
-            <div class="inv-tokens">in:{{formatInt .InputTokens}} out:{{formatInt .OutputTokens}}</div>
-          </summary>
-          <div class="inv-body">
-            <div class="inv-section">
-              <div class="inv-section-label">Request ({{.RequestID}})</div>
-              <pre class="json">{{.InputBody}}</pre>
+          </details>
+          {{end}}
+
+          {{range .Detail.Turns}}
+          <div class="chat-msg {{.Role}}">
+            <div class="chat-role">{{.Role}}</div>
+
+            {{range .Blocks}}
+              {{if eq .Type "text"}}
+                {{if .Text}}
+                <div class="content-block block-text">{{.Text}}</div>
+                {{end}}
+
+              {{else if eq .Type "thinking"}}
+                <details class="content-block block-thinking">
+                  <summary><span class="arrow">&#9654;</span> Thinking ({{len .Text}} chars)</summary>
+                  <div class="thinking-content">{{.Text}}</div>
+                </details>
+
+              {{else if eq .Type "tool_use"}}
+                <details class="content-block block-tool">
+                  <summary>
+                    <span class="arrow">&#9654;</span>
+                    <span class="tool-badge">{{.ToolName}}</span>
+                    <span class="tool-id">{{.ToolID}}</span>
+                  </summary>
+                  <div class="tool-body">{{.ToolInput}}</div>
+                </details>
+
+              {{else if eq .Type "tool_result"}}
+                <details class="content-block block-result{{if .IsError}} error-result{{end}}">
+                  <summary>
+                    <span class="arrow">&#9654;</span>
+                    <span class="result-label">{{if .IsError}}Error{{else}}Result{{end}} for {{.ToolID}}</span>
+                  </summary>
+                  <div class="result-body">{{.ResultContent}}</div>
+                </details>
+
+              {{end}}
+            {{end}}
+
+            {{if .Metrics}}
+            <div class="turn-metrics">
+              <div><span class="metric-label">time</span> <span class="metric-value">{{.Metrics.Timestamp.Format "15:04:05"}}</span></div>
+              <div><span class="metric-label">in</span> <span class="metric-value">{{formatInt .Metrics.InputTokens}}</span></div>
+              <div><span class="metric-label">out</span> <span class="metric-value">{{formatInt .Metrics.OutputTokens}}</span></div>
+              {{if gt .Metrics.CacheReadTokens 0}}<div><span class="metric-label">cache-read</span> <span class="metric-value">{{formatInt .Metrics.CacheReadTokens}}</span></div>{{end}}
+              {{if gt .Metrics.CacheWriteTokens 0}}<div><span class="metric-label">cache-write</span> <span class="metric-value">{{formatInt .Metrics.CacheWriteTokens}}</span></div>{{end}}
+              {{if gt .Metrics.LatencyMs 0}}<div><span class="metric-label">latency</span> <span class="metric-value">{{durationMs .Metrics.LatencyMs}}</span></div>{{end}}
+              {{if gt .Metrics.FirstByteMs 0}}<div><span class="metric-label">ttfb</span> <span class="metric-value">{{durationMs .Metrics.FirstByteMs}}</span></div>{{end}}
+              {{if .Metrics.StopReason}}<div><span class="metric-label">stop</span> <span class="metric-value">{{.Metrics.StopReason}}</span></div>{{end}}
+              <div><span class="metric-label">model</span> <span class="metric-value">{{shortModel .Metrics.ModelID}}</span></div>
             </div>
-            <div class="inv-section">
-              <div class="inv-section-label">Response</div>
-              <pre class="json">{{.OutputBody}}</pre>
+            {{end}}
+          </div>
+          {{end}}
+
+        </div>
+        {{end}}
+
+        <!-- Raw Invocations -->
+        <details>
+          <summary class="section-divider"><span class="arrow">&#9654;</span> Raw Invocations ({{len .Invocations}})</summary>
+          <div style="margin-top: 0.5rem;">
+          {{range .Invocations}}
+          <details class="invocation">
+            <summary class="inv-header">
+              <div class="inv-meta">
+                <span class="arrow">&#9654;</span>
+                <span class="inv-time">{{.Timestamp.Format "15:04:05"}}</span>
+                <span class="inv-op">{{.Operation}}</span>
+                <span class="inv-status {{if eq .Status "success"}}ok{{else}}error{{end}}">{{.Status}}{{if .ErrorCode}} ({{.ErrorCode}}){{end}}</span>
+              </div>
+              <div class="inv-tokens">in:{{formatInt .InputTokens}} out:{{formatInt .OutputTokens}}</div>
+            </summary>
+            <div class="inv-body">
+              <div class="inv-section">
+                <div class="inv-section-label">Request ({{.RequestID}})</div>
+                <pre class="json">{{.InputBody}}</pre>
+              </div>
+              <div class="inv-section">
+                <div class="inv-section-label">Response</div>
+                <pre class="json">{{.OutputBody}}</pre>
+              </div>
             </div>
+          </details>
+          {{end}}
           </div>
         </details>
-        {{end}}
+
       </div>
     </details>
     {{end}}

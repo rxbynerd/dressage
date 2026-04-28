@@ -15,7 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 // s3API is the subset of the S3 client interface used by Fetcher,

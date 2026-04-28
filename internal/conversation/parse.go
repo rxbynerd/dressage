@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 // messagesAPIRequest represents the relevant fields of an Anthropic Messages API request body.

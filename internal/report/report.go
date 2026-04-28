@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 //go:embed template.html

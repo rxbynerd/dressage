@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 func TestExtractSessionID(t *testing.T) {

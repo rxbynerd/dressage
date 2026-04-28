@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 // streamChunk represents a single SSE-like chunk from a Bedrock streaming response.
@@ -233,7 +233,7 @@ func extractStreamMetrics(body json.RawMessage) *streamMetrics {
 			if len(chunk.Message) > 0 {
 				var msg struct {
 					Usage struct {
-						CacheReadInputTokens    int64 `json:"cache_read_input_tokens"`
+						CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
 						CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 					} `json:"usage"`
 				}

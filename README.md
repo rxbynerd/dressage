@@ -11,13 +11,13 @@ Analyze AWS Bedrock model invocation logs to investigate opportunities for devel
 ## Installation
 
 ```bash
-go install github.com/rubynerd/dressage/cmd/dressage@latest
+go install github.com/rxbynerd/dressage/cmd/dressage@latest
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/rubynerd/dressage.git
+git clone https://github.com/rxbynerd/dressage.git
 cd dressage
 go build -o dressage ./cmd/dressage/
 ```

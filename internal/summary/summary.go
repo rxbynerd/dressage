@@ -9,8 +9,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/rubynerd/dressage/internal/conversation"
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/conversation"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 // conversationGap is the maximum duration between consecutive invocations
@@ -215,11 +215,11 @@ func buildConversationsTimeBased(dayLogs []model.InvocationLog, dayKey string, s
 // chronologically ordered invocation logs belonging to one conversation.
 func buildConversationSummary(id string, logs []model.InvocationLog) model.ConversationSummary {
 	summary := model.ConversationSummary{
-		ID:          id,
-		ModelID:     logs[0].ModelID,
-		IdentityARN: logs[0].Identity.ARN,
-		StartTime:   logs[0].Timestamp,
-		EndTime:     logs[len(logs)-1].Timestamp,
+		ID:           id,
+		ModelID:      logs[0].ModelID,
+		IdentityARN:  logs[0].Identity.ARN,
+		StartTime:    logs[0].Timestamp,
+		EndTime:      logs[len(logs)-1].Timestamp,
 		MessageCount: len(logs),
 	}
 

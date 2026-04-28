@@ -11,9 +11,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 
-	"github.com/rubynerd/dressage/internal/report"
-	"github.com/rubynerd/dressage/internal/s3fetch"
-	"github.com/rubynerd/dressage/internal/summary"
+	"github.com/rxbynerd/dressage/internal/report"
+	"github.com/rxbynerd/dressage/internal/s3fetch"
+	"github.com/rxbynerd/dressage/internal/summary"
 )
 
 const dateFormat = "2006-01-02"

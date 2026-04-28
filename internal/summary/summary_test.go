@@ -5,19 +5,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/rubynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/model"
 )
 
 func makeLog(modelID, arn string, ts time.Time, inputTokens, outputTokens int64) model.InvocationLog {
 	return model.InvocationLog{
-		Timestamp:  ts,
-		ModelID:    modelID,
-		RequestID:  ts.Format(time.RFC3339Nano),
-		Operation:  "InvokeModel",
-		Status:     "200",
-		Identity:   model.Identity{ARN: arn},
-		Input:      model.InvocationInput{InputTokenCount: inputTokens},
-		Output:     model.InvocationOutput{OutputTokenCount: outputTokens},
+		Timestamp: ts,
+		ModelID:   modelID,
+		RequestID: ts.Format(time.RFC3339Nano),
+		Operation: "InvokeModel",
+		Status:    "200",
+		Identity:  model.Identity{ARN: arn},
+		Input:     model.InvocationInput{InputTokenCount: inputTokens},
+		Output:    model.InvocationOutput{OutputTokenCount: outputTokens},
 	}
 }
 

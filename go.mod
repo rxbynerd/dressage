@@ -1,4 +1,4 @@
-module github.com/rubynerd/dressage
+module github.com/rxbynerd/dressage
 
 go 1.24
 

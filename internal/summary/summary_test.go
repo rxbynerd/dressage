@@ -168,6 +168,51 @@ func TestErrorCounting(t *testing.T) {
 	}
 }
 
+// A session id shorter than 8 characters must not panic when the reconstruction
+// log line truncates it for display. Regression test for an unsafe sid[:8].
+func TestShortSessionIDNoPanic(t *testing.T) {
+	cases := []struct {
+		name string
+		s    string
+		want string
+	}{
+		{"shorter than 8", "x", "x"},
+		{"exactly 8", "abcdefgh", "abcdefgh"},
+		{"longer than 8", "abcdefghij", "abcdefgh"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shortID(tc.s); got != tc.want {
+				t.Errorf("shortID(%q) = %q, want %q", tc.s, got, tc.want)
+			}
+		})
+	}
+}
+
+// Summarizing a record whose session id resolves to a <8-char string (here a
+// Bedrock metadata.user_id ending in "_session_x") must not panic.
+func TestSummarizeShortSessionID(t *testing.T) {
+	ts := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	rec := makeLog("claude-3", "arn:aws:iam::123:user/alice", ts, 10, 20)
+	rec.Input.JSON = json.RawMessage(`{"metadata":{"user_id":"user_h_account__session_x"},"messages":[{"role":"user","content":"hi"}]}`)
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Summarize panicked on short session id: %v", r)
+		}
+	}()
+
+	rpt := Summarize([]model.Record{rec})
+	if len(rpt.Days) != 1 {
+		t.Fatalf("expected 1 day, got %d", len(rpt.Days))
+	}
+	conv := rpt.Days[0].Conversations[0]
+	if conv.SessionID != "x" {
+		t.Errorf("SessionID = %q, want x", conv.SessionID)
+	}
+}
+
 func TestPrettyJSON(t *testing.T) {
 	cases := []struct {
 		name  string

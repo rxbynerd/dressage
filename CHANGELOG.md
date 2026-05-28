@@ -9,14 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Azure OpenAI log ingestion via Azure Monitor Log Analytics (the new
+  `dressage azure` subcommand). Queries the `AzureDiagnostics` table for the
+  `RequestResponse` category, reconstructs OpenAI Chat Completions
+  conversations (including `tool_calls`, the legacy `function_call`, and
+  streaming-summarized responses), and renders them through the shared report
+  pipeline. See [docs/providers/azure.md](docs/providers/azure.md).
 - Provider abstraction so log sources other than AWS Bedrock can be added
   without forking the codebase. Every fetcher now emits a provider-neutral
   `model.Record` (with `Identity`/`Body`) and implements the new
   `fetch.Fetcher` interface; conversation reconstruction dispatches on a
   provider envelope family. This is the groundwork for upcoming providers
   (Azure OpenAI, Vertex AI / Gemini).
-- Per-provider documentation under `docs/providers/` (Bedrock guide, plus
-  planned-status stubs for Azure and Vertex) and a "Supported providers"
+- Per-provider documentation under `docs/providers/` (Bedrock and Azure
+  guides, plus a planned-status stub for Vertex) and a "Supported providers"
   table in the README.
 
 ### Changed

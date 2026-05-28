@@ -40,7 +40,11 @@ func (t Turn) HasToolUse() bool {
 
 // ContentBlock is a single content element within a turn.
 type ContentBlock struct {
-	Type          string // "text", "tool_use", "tool_result", "thinking"
+	// Type identifies the block kind. The known set ("text", "tool_use",
+	// "tool_result", "thinking") is NOT exhaustive: a "media" type is planned
+	// for image/file parts (see #6), and unrecognized provider block types are
+	// passed through verbatim — readers must not assume the set is closed.
+	Type          string
 	Text          string // text content (for "text" and "thinking" types)
 	ToolName      string // tool name (for "tool_use")
 	ToolID        string // tool use ID (for "tool_use" and "tool_result")

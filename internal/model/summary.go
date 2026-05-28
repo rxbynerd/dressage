@@ -4,10 +4,11 @@ import "time"
 
 // Report is the top-level structure passed to the HTML template.
 type Report struct {
-	GeneratedAt    time.Time
-	DateRange      DateRange
-	TotalStats     Stats
-	Days           []DaySummary
+	Title       string // report heading, e.g. "Bedrock Invocation Log Report"
+	GeneratedAt time.Time
+	DateRange   DateRange
+	TotalStats  Stats
+	Days        []DaySummary
 }
 
 // DateRange represents the start and end dates of the report.

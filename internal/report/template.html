@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bedrock Invocation Log Report</title>
+<title>{{.Title}}</title>
 <style>
   :root {
     --bg: #fafafa;
@@ -424,7 +424,7 @@
 <body>
 
 <div class="header">
-  <h1>Bedrock Invocation Log Report</h1>
+  <h1>{{.Title}}</h1>
   <div class="meta">
     Generated {{.GeneratedAt.Format "2006-01-02 15:04:05 MST"}}
     {{if not .DateRange.Start.IsZero}} &middot; {{.DateRange.Start.Format "2006-01-02"}} to {{.DateRange.End.Format "2006-01-02"}}{{end}}

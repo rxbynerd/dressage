@@ -111,6 +111,7 @@ func run(ctx context.Context, bucket, prefix, region, profile, startStr, endStr,
 	// Summarize.
 	log.Println("Building summary...")
 	rpt := summary.Summarize(logs)
+	rpt.Title = "Bedrock Invocation Log Report"
 
 	// Generate report.
 	log.Printf("Generating report to %s...", output)

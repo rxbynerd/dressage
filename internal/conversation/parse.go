@@ -1,5 +1,6 @@
-// Package conversation reconstructs Claude Code conversations from Bedrock
-// model invocation logs containing Anthropic Messages API request/response bodies.
+// Package conversation reconstructs conversations from normalized invocation
+// records, dispatching on each record's provider to the appropriate envelope
+// parser (currently Anthropic Messages API request/response bodies).
 package conversation
 
 import (
@@ -42,10 +43,10 @@ type apiTool struct {
 	Description string `json:"description"`
 }
 
-// ExtractSessionID parses the inputBodyJson and returns the session UUID if present.
-// The session ID is extracted from metadata.user_id which has the format:
-// user_{hash}_account__session_{uuid}
-func ExtractSessionID(inputBody json.RawMessage) string {
+// extractSessionAnthropic parses an Anthropic Messages API request body and
+// returns the session UUID if present. The session ID is extracted from
+// metadata.user_id which has the format: user_{hash}_account__session_{uuid}
+func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if len(inputBody) == 0 {
 		return ""
 	}
@@ -64,24 +65,25 @@ func ExtractSessionID(inputBody json.RawMessage) string {
 	return ""
 }
 
-// parsedInvocation pairs a log entry with its parsed Messages API request body.
+// parsedInvocation pairs a record with its parsed Messages API request body.
 type parsedInvocation struct {
-	log *model.InvocationLog
+	rec *model.Record
 	req *messagesAPIRequest
 }
 
-// Reconstruct builds a ConversationDetail from a set of invocation logs
-// belonging to the same conversation. It finds the invocation with the most
-// messages (the latest main-thread turn), extracts the full conversation
-// history from its input, and appends the final assistant response from its output.
-func Reconstruct(logs []model.InvocationLog) *model.ConversationDetail {
-	if len(logs) == 0 {
+// reconstructAnthropic builds a ConversationDetail from a set of records
+// belonging to the same conversation, decoded as Anthropic Messages API
+// request/response bodies. It finds the invocation with the most messages
+// (the latest main-thread turn), extracts the full conversation history from
+// its input, and appends the final assistant response from its output.
+func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
+	if len(records) == 0 {
 		return nil
 	}
 
 	// Sort by timestamp for consistent ordering.
-	sorted := make([]model.InvocationLog, len(logs))
-	copy(sorted, logs)
+	sorted := make([]model.Record, len(records))
+	copy(sorted, records)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
 	})
@@ -92,11 +94,11 @@ func Reconstruct(logs []model.InvocationLog) *model.ConversationDetail {
 	var best *parsedInvocation
 
 	for i := range sorted {
-		req := parseRequest(sorted[i].Input.InputBodyJSON)
+		req := parseRequest(sorted[i].Input.JSON)
 		if req == nil {
 			continue
 		}
-		p := parsedInvocation{log: &sorted[i], req: req}
+		p := parsedInvocation{rec: &sorted[i], req: req}
 		all = append(all, p)
 		if best == nil || len(req.Messages) > len(best.req.Messages) {
 			best = &all[len(all)-1]
@@ -120,9 +122,9 @@ func Reconstruct(logs []model.InvocationLog) *model.ConversationDetail {
 	}
 
 	// Reassemble the final assistant response from the output body.
-	finalTurn := reassembleOutput(best.log.Output.OutputBodyJSON)
+	finalTurn := reassembleOutput(best.rec.Output.JSON)
 	if finalTurn != nil {
-		finalTurn.Metrics = extractMetricsFromLog(best.log, best.log.Output.OutputBodyJSON)
+		finalTurn.Metrics = extractMetricsFromLog(best.rec, best.rec.Output.JSON)
 		detail.Turns = append(detail.Turns, *finalTurn)
 	}
 
@@ -150,21 +152,21 @@ func attachMetrics(detail *model.ConversationDetail, invocations []parsedInvocat
 		if turn.Metrics != nil {
 			continue // already has metrics
 		}
-		turn.Metrics = extractMetricsFromLog(p.log, p.log.Output.OutputBodyJSON)
+		turn.Metrics = extractMetricsFromLog(p.rec, p.rec.Output.JSON)
 	}
 }
 
-// extractMetricsFromLog builds TurnMetrics from the invocation log entry
+// extractMetricsFromLog builds TurnMetrics from the invocation record
 // and the streaming output chunks.
-func extractMetricsFromLog(log *model.InvocationLog, outputBody json.RawMessage) *model.TurnMetrics {
+func extractMetricsFromLog(rec *model.Record, outputBody json.RawMessage) *model.TurnMetrics {
 	m := &model.TurnMetrics{
-		Timestamp:        log.Timestamp,
-		RequestID:        log.RequestID,
-		ModelID:          log.ModelID,
-		InputTokens:      log.Input.InputTokenCount,
-		OutputTokens:     log.Output.OutputTokenCount,
-		CacheReadTokens:  log.Input.CacheReadInputTokenCount,
-		CacheWriteTokens: log.Input.CacheWriteInputTokenCount,
+		Timestamp:        rec.Timestamp,
+		RequestID:        rec.RequestID,
+		ModelID:          rec.ModelID,
+		InputTokens:      rec.Input.TokenCount,
+		OutputTokens:     rec.Output.TokenCount,
+		CacheReadTokens:  rec.Input.CacheRead,
+		CacheWriteTokens: rec.Input.CacheWrite,
 	}
 
 	// Try to extract additional metrics from the streaming output chunks.

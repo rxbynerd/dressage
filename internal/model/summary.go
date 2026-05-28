@@ -37,9 +37,9 @@ type DaySummary struct {
 // ConversationSummary groups related invocations into a logical conversation.
 type ConversationSummary struct {
 	ID           string
-	SessionID    string // Claude Code session UUID (from metadata.user_id)
+	SessionID    string // session id extracted from the request body when present
 	ModelID      string
-	IdentityARN  string
+	Identity     string
 	StartTime    time.Time
 	EndTime      time.Time
 	MessageCount int
@@ -62,5 +62,5 @@ type Invocation struct {
 	OutputBody   string // pretty-printed JSON
 	InputTokens  int64
 	OutputTokens int64
-	IdentityARN  string
+	Identity     string
 }

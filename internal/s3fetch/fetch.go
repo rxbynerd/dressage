@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/rxbynerd/dressage/internal/fetch"
 	"github.com/rxbynerd/dressage/internal/model"
 )
 
@@ -32,6 +33,9 @@ type Fetcher struct {
 	prefix string
 }
 
+// Fetcher implements the provider-neutral fetch.Fetcher interface.
+var _ fetch.Fetcher = (*Fetcher)(nil)
+
 // New creates a Fetcher that reads logs from the given S3 bucket and prefix.
 func New(client *s3.Client, bucket, prefix string) *Fetcher {
 	return &Fetcher{
@@ -43,9 +47,10 @@ func New(client *s3.Client, bucket, prefix string) *Fetcher {
 
 // Fetch lists all .json.gz log files under the configured prefix, optionally
 // filtered to the [start, end) time range, then downloads, decompresses, and
-// parses each file into InvocationLog records. Overflow payloads referenced
-// via inputBodyS3Path/outputBodyS3Path are fetched and inlined.
-func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.InvocationLog, error) {
+// parses each file into Bedrock log records. Overflow payloads referenced
+// via inputBodyS3Path/outputBodyS3Path are fetched and inlined. The Bedrock
+// records are then normalized into provider-neutral model.Record values.
+func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.Record, error) {
 	keys, err := f.listLogFiles(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing log files: %w", err)
@@ -59,7 +64,7 @@ func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.Invo
 
 	log.Printf("Found %d log files", len(keys))
 
-	var allLogs []model.InvocationLog
+	var allLogs []bedrockLog
 	for i, key := range keys {
 		log.Printf("Processing file %d/%d: %s", i+1, len(keys), key)
 
@@ -94,7 +99,12 @@ func (f *Fetcher) Fetch(ctx context.Context, start, end time.Time) ([]model.Invo
 	}
 
 	log.Printf("Parsed %d records (%d overflow payloads resolved)", len(allLogs), resolved)
-	return allLogs, nil
+
+	records := make([]model.Record, len(allLogs))
+	for i := range allLogs {
+		records[i] = allLogs[i].normalize()
+	}
+	return records, nil
 }
 
 // isDataFile returns true if the key is under a data/ subdirectory,
@@ -179,8 +189,8 @@ func parseDateFromKey(key string) (time.Time, bool) {
 }
 
 // downloadAndParse fetches a single .json.gz file from S3, decompresses it,
-// and parses newline-delimited JSON into InvocationLog records.
-func (f *Fetcher) downloadAndParse(ctx context.Context, key string) ([]model.InvocationLog, error) {
+// and parses newline-delimited JSON into Bedrock log records.
+func (f *Fetcher) downloadAndParse(ctx context.Context, key string) ([]bedrockLog, error) {
 	output, err := f.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(f.bucket),
 		Key:    aws.String(key),
@@ -246,8 +256,8 @@ func parseS3URI(s3URI string) (bucket, key string, err error) {
 }
 
 // parseNDJSON reads newline-delimited JSON from r and returns the parsed logs.
-func parseNDJSON(r io.Reader) ([]model.InvocationLog, error) {
-	var logs []model.InvocationLog
+func parseNDJSON(r io.Reader) ([]bedrockLog, error) {
+	var logs []bedrockLog
 	scanner := bufio.NewScanner(r)
 
 	// Bedrock log lines can be large; increase the buffer to 10 MB.
@@ -259,7 +269,7 @@ func parseNDJSON(r io.Reader) ([]model.InvocationLog, error) {
 			continue
 		}
 
-		var entry model.InvocationLog
+		var entry bedrockLog
 		if err := json.Unmarshal(line, &entry); err != nil {
 			return nil, fmt.Errorf("parsing JSON line: %w", err)
 		}

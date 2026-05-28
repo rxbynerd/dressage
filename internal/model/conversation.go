@@ -3,7 +3,7 @@ package model
 import "time"
 
 // ConversationDetail holds a fully reconstructed conversation parsed from
-// the Messages API request/response bodies in Bedrock invocation logs.
+// the request/response bodies of a provider's invocation records.
 type ConversationDetail struct {
 	SessionID    string
 	SystemPrompt string

@@ -63,7 +63,7 @@ func TestGoldenReport(t *testing.T) {
 // streaming output (thinking + text + tool_use + tool_result + metrics + cache),
 // a non-streaming reconstructed response with an array-format system prompt,
 // time-gap grouping without reconstruction, and an error record.
-func goldenFixtureLogs() []model.InvocationLog {
+func goldenFixtureLogs() []model.Record {
 	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 
 	const opStream = "InvokeModelWithResponseStream"
@@ -127,30 +127,34 @@ func goldenFixtureLogs() []model.InvocationLog {
 	// Conversation C: error record, no session (time-gap grouping, no reconstruction).
 	cIn := `{"messages":[{"role":"user","content":"hello"}]}`
 
-	return []model.InvocationLog{
+	return []model.Record{
 		{
+			Provider:  "bedrock",
 			Timestamp: base, RequestID: "req-a1", ModelID: opus, Operation: opStream, Status: "200",
-			Identity: model.Identity{ARN: devARN},
-			Input:    model.InvocationInput{InputBodyJSON: json.RawMessage(a1In), InputContentType: "application/json", InputTokenCount: 50},
-			Output:   model.InvocationOutput{OutputBodyJSON: json.RawMessage(a1Out), OutputContentType: "application/json", OutputTokenCount: 30},
+			Identity: model.Identity{Principal: devARN},
+			Input:    model.Body{JSON: json.RawMessage(a1In), ContentType: "application/json", TokenCount: 50},
+			Output:   model.Body{JSON: json.RawMessage(a1Out), ContentType: "application/json", TokenCount: 30},
 		},
 		{
+			Provider:  "bedrock",
 			Timestamp: base.Add(8 * time.Second), RequestID: "req-a2", ModelID: opus, Operation: opStream, Status: "200",
-			Identity: model.Identity{ARN: devARN},
-			Input:    model.InvocationInput{InputBodyJSON: json.RawMessage(a2In), InputContentType: "application/json", InputTokenCount: 120, CacheReadInputTokenCount: 40, CacheWriteInputTokenCount: 10},
-			Output:   model.InvocationOutput{OutputBodyJSON: json.RawMessage(a2Out), OutputContentType: "application/json", OutputTokenCount: 18},
+			Identity: model.Identity{Principal: devARN},
+			Input:    model.Body{JSON: json.RawMessage(a2In), ContentType: "application/json", TokenCount: 120, CacheRead: 40, CacheWrite: 10},
+			Output:   model.Body{JSON: json.RawMessage(a2Out), ContentType: "application/json", TokenCount: 18},
 		},
 		{
+			Provider:  "bedrock",
 			Timestamp: base.Add(20 * time.Minute), RequestID: "req-b1", ModelID: opus, Operation: opConverse, Status: "200",
-			Identity: model.Identity{ARN: devARN},
-			Input:    model.InvocationInput{InputBodyJSON: json.RawMessage(bIn), InputContentType: "application/json", InputTokenCount: 12},
-			Output:   model.InvocationOutput{OutputBodyJSON: json.RawMessage(bOut), OutputContentType: "application/json", OutputTokenCount: 8},
+			Identity: model.Identity{Principal: devARN},
+			Input:    model.Body{JSON: json.RawMessage(bIn), ContentType: "application/json", TokenCount: 12},
+			Output:   model.Body{JSON: json.RawMessage(bOut), ContentType: "application/json", TokenCount: 8},
 		},
 		{
+			Provider:  "bedrock",
 			Timestamp: base.Add(40 * time.Minute), RequestID: "req-c1", ModelID: haiku, Operation: opStream, Status: "429", ErrorCode: "ThrottlingException",
-			Identity: model.Identity{ARN: ciARN},
-			Input:    model.InvocationInput{InputBodyJSON: json.RawMessage(cIn), InputContentType: "application/json", InputTokenCount: 5},
-			Output:   model.InvocationOutput{OutputTokenCount: 0},
+			Identity: model.Identity{Principal: ciARN},
+			Input:    model.Body{JSON: json.RawMessage(cIn), ContentType: "application/json", TokenCount: 5},
+			Output:   model.Body{TokenCount: 0},
 		},
 	}
 }

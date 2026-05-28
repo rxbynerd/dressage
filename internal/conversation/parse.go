@@ -58,9 +58,17 @@ func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if err := json.Unmarshal(inputBody, &req); err != nil {
 		return ""
 	}
+	return sessionSuffix(req.Metadata.UserID)
+}
+
+// sessionSuffix extracts the session UUID that follows the "_session_" marker
+// in an identity string of the form user_{hash}_account__session_{uuid} (as set
+// by Claude Code). It returns "" when the marker is absent. Shared by the
+// Anthropic and OpenAI session-extraction paths.
+func sessionSuffix(s string) string {
 	const prefix = "_session_"
-	if idx := strings.Index(req.Metadata.UserID, prefix); idx >= 0 {
-		return req.Metadata.UserID[idx+len(prefix):]
+	if idx := strings.Index(s, prefix); idx >= 0 {
+		return s[idx+len(prefix):]
 	}
 	return ""
 }
@@ -202,12 +210,7 @@ func parseRequest(body json.RawMessage) *messagesAPIRequest {
 }
 
 func extractSessionFromReq(req *messagesAPIRequest) string {
-	const prefix = "_session_"
-	uid := req.Metadata.UserID
-	if idx := strings.Index(uid, prefix); idx >= 0 {
-		return uid[idx+len(prefix):]
-	}
-	return ""
+	return sessionSuffix(req.Metadata.UserID)
 }
 
 // extractSystemPrompt handles both string and array formats for the system field.

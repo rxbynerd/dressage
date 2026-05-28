@@ -31,6 +31,8 @@ func Reconstruct(records []model.Record) *model.ConversationDetail {
 		return nil
 	}
 	switch family(records[0].Provider) {
+	case familyOpenAI:
+		return reconstructOpenAI(records)
 	default:
 		return reconstructAnthropic(records)
 	}
@@ -40,6 +42,8 @@ func Reconstruct(records []model.Record) *model.ConversationDetail {
 // using the provider-appropriate location.
 func ExtractSessionID(provider string, inputBody json.RawMessage) string {
 	switch family(provider) {
+	case familyOpenAI:
+		return extractSessionOpenAI(inputBody)
 	default:
 		return extractSessionAnthropic(inputBody)
 	}

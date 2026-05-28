@@ -8,16 +8,17 @@ import (
 	"github.com/rxbynerd/dressage/internal/model"
 )
 
-func makeLog(modelID, arn string, ts time.Time, inputTokens, outputTokens int64) model.InvocationLog {
-	return model.InvocationLog{
+func makeLog(modelID, arn string, ts time.Time, inputTokens, outputTokens int64) model.Record {
+	return model.Record{
+		Provider:  "bedrock",
 		Timestamp: ts,
 		ModelID:   modelID,
 		RequestID: ts.Format(time.RFC3339Nano),
 		Operation: "InvokeModel",
 		Status:    "200",
-		Identity:  model.Identity{ARN: arn},
-		Input:     model.InvocationInput{InputTokenCount: inputTokens},
-		Output:    model.InvocationOutput{OutputTokenCount: outputTokens},
+		Identity:  model.Identity{Principal: arn},
+		Input:     model.Body{TokenCount: inputTokens},
+		Output:    model.Body{TokenCount: outputTokens},
 	}
 }
 
@@ -36,7 +37,7 @@ func TestSummarizeEmpty(t *testing.T) {
 
 func TestSummarizeSingleLog(t *testing.T) {
 	ts := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog("claude-3", "arn:aws:iam::123:user/alice", ts, 100, 200),
 	}
 
@@ -65,7 +66,7 @@ func TestConversationGroupingWithinGap(t *testing.T) {
 	arn := "arn:aws:iam::123:user/alice"
 	mdl := "claude-3"
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog(mdl, arn, base, 100, 50),
 		makeLog(mdl, arn, base.Add(2*time.Minute), 80, 40), // within 5min gap
 	}
@@ -90,7 +91,7 @@ func TestConversationGroupingAcrossGap(t *testing.T) {
 	arn := "arn:aws:iam::123:user/alice"
 	mdl := "claude-3"
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog(mdl, arn, base, 100, 50),
 		makeLog(mdl, arn, base.Add(10*time.Minute), 80, 40), // exceeds 5min gap
 	}
@@ -113,7 +114,7 @@ func TestMultiDayGrouping(t *testing.T) {
 	day1 := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	day2 := time.Date(2024, 1, 16, 10, 0, 0, 0, time.UTC)
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog(mdl, arn, day1, 100, 50),
 		makeLog(mdl, arn, day2, 80, 40),
 	}
@@ -133,7 +134,7 @@ func TestDifferentIdentitiesSeparated(t *testing.T) {
 	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	mdl := "claude-3"
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog(mdl, "arn:aws:iam::123:user/alice", base, 100, 50),
 		makeLog(mdl, "arn:aws:iam::123:user/bob", base.Add(time.Minute), 80, 40),
 	}
@@ -155,7 +156,7 @@ func TestErrorCounting(t *testing.T) {
 	errLog.ErrorCode = "ThrottlingException"
 	errLog.Status = "429"
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		makeLog(mdl, arn, base.Add(-time.Minute), 100, 50),
 		errLog,
 	}

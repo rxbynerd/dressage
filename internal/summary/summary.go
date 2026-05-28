@@ -1,4 +1,4 @@
-// Package summary groups and summarizes Bedrock model invocation logs
+// Package summary groups and summarizes normalized invocation records
 // into a structured report organized by day and conversation.
 package summary
 
@@ -14,30 +14,30 @@ import (
 )
 
 // conversationGap is the maximum duration between consecutive invocations
-// within the same (modelId, identityARN) group before they are split into
-// separate conversations.
+// within the same (provider, modelId, principal) group before they are split
+// into separate conversations.
 const conversationGap = 5 * time.Minute
 
-// Summarize takes a slice of invocation logs and produces a complete Report
-// grouped by day and conversation.
-func Summarize(logs []model.InvocationLog) *model.Report {
+// Summarize takes a slice of normalized invocation records and produces a
+// complete Report grouped by day and conversation.
+func Summarize(records []model.Record) *model.Report {
 	now := time.Now().UTC()
 
-	if len(logs) == 0 {
+	if len(records) == 0 {
 		return &model.Report{
 			GeneratedAt: now,
 			TotalStats:  emptyStats(),
 		}
 	}
 
-	// Sort all logs by timestamp.
-	sorted := make([]model.InvocationLog, len(logs))
-	copy(sorted, logs)
+	// Sort all records by timestamp.
+	sorted := make([]model.Record, len(records))
+	copy(sorted, records)
 	sort.Slice(sorted, func(i, j int) bool {
 		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
 	})
 
-	// Group logs by UTC date.
+	// Group records by UTC date.
 	dayBuckets := groupByDay(sorted)
 
 	// Build per-day summaries.
@@ -53,13 +53,13 @@ func Summarize(logs []model.InvocationLog) *model.Report {
 	sort.Strings(dayKeys)
 
 	for _, dayKey := range dayKeys {
-		dayLogs := dayBuckets[dayKey]
-		dayDate := dayLogs[0].Timestamp.UTC().Truncate(24 * time.Hour)
+		dayRecords := dayBuckets[dayKey]
+		dayDate := dayRecords[0].Timestamp.UTC().Truncate(24 * time.Hour)
 
-		conversations, nextIndex := buildConversations(dayLogs, dayKey, globalConvIndex)
+		conversations, nextIndex := buildConversations(dayRecords, dayKey, globalConvIndex)
 		globalConvIndex = nextIndex
 
-		dayStats := computeStats(dayLogs)
+		dayStats := computeStats(dayRecords)
 		mergeStats(&totalStats, &dayStats)
 
 		days = append(days, model.DaySummary{
@@ -82,37 +82,39 @@ func Summarize(logs []model.InvocationLog) *model.Report {
 	}
 }
 
-// groupByDay buckets logs by their UTC date string (YYYYMMDD).
-func groupByDay(logs []model.InvocationLog) map[string][]model.InvocationLog {
-	buckets := make(map[string][]model.InvocationLog)
-	for _, log := range logs {
-		key := log.Timestamp.UTC().Format("20060102")
-		buckets[key] = append(buckets[key], log)
+// groupByDay buckets records by their UTC date string (YYYYMMDD).
+func groupByDay(records []model.Record) map[string][]model.Record {
+	buckets := make(map[string][]model.Record)
+	for _, rec := range records {
+		key := rec.Timestamp.UTC().Format("20060102")
+		buckets[key] = append(buckets[key], rec)
 	}
 	return buckets
 }
 
-// groupKey identifies a unique (modelId, identityARN) pair for conversation grouping.
+// groupKey identifies a unique (provider, modelId, principal) tuple for
+// conversation grouping.
 type groupKey struct {
-	ModelID     string
-	IdentityARN string
+	Provider  string
+	ModelID   string
+	Principal string
 }
 
-// buildConversations groups a day's logs into conversations.
+// buildConversations groups a day's records into conversations.
 // It first attempts session-based grouping using the session ID extracted from
-// inputBodyJson metadata (used by Claude Code). Logs without session IDs fall
-// back to the (modelId, identityARN) + 5-minute gap heuristic.
-func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
-	// Partition logs: those with session IDs vs those without.
-	sessionGroups := make(map[string][]model.InvocationLog)
-	var noSessionLogs []model.InvocationLog
+// the request body (used by Claude Code). Records without session IDs fall
+// back to the (provider, modelId, principal) + 5-minute gap heuristic.
+func buildConversations(dayRecords []model.Record, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
+	// Partition records: those with session IDs vs those without.
+	sessionGroups := make(map[string][]model.Record)
+	var noSessionRecords []model.Record
 
-	for _, lg := range dayLogs {
-		sid := conversation.ExtractSessionID(lg.Input.InputBodyJSON)
+	for _, rec := range dayRecords {
+		sid := conversation.ExtractSessionID(rec.Provider, rec.Input.JSON)
 		if sid != "" {
-			sessionGroups[sid] = append(sessionGroups[sid], lg)
+			sessionGroups[sid] = append(sessionGroups[sid], rec)
 		} else {
-			noSessionLogs = append(noSessionLogs, lg)
+			noSessionRecords = append(noSessionRecords, rec)
 		}
 	}
 
@@ -127,18 +129,18 @@ func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex
 	sort.Strings(sessionIDs)
 
 	for _, sid := range sessionIDs {
-		groupLogs := sessionGroups[sid]
-		sort.Slice(groupLogs, func(i, j int) bool {
-			return groupLogs[i].Timestamp.Before(groupLogs[j].Timestamp)
+		groupRecords := sessionGroups[sid]
+		sort.Slice(groupRecords, func(i, j int) bool {
+			return groupRecords[i].Timestamp.Before(groupRecords[j].Timestamp)
 		})
 
 		convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
 		convIndex++
-		cs := buildConversationSummary(convID, groupLogs)
+		cs := buildConversationSummary(convID, groupRecords)
 		cs.SessionID = sid
 
 		// Attempt full conversation reconstruction.
-		detail := conversation.Reconstruct(groupLogs)
+		detail := conversation.Reconstruct(groupRecords)
 		if detail != nil {
 			cs.Detail = detail
 			log.Printf("Reconstructed conversation %s: %d turns, session %s",
@@ -147,9 +149,9 @@ func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex
 		conversations = append(conversations, cs)
 	}
 
-	// Process remaining logs without session IDs using the time-gap heuristic.
-	if len(noSessionLogs) > 0 {
-		gapConvs, nextIdx := buildConversationsTimeBased(noSessionLogs, dayKey, convIndex)
+	// Process remaining records without session IDs using the time-gap heuristic.
+	if len(noSessionRecords) > 0 {
+		gapConvs, nextIdx := buildConversationsTimeBased(noSessionRecords, dayKey, convIndex)
 		conversations = append(conversations, gapConvs...)
 		convIndex = nextIdx
 	}
@@ -162,13 +164,14 @@ func buildConversations(dayLogs []model.InvocationLog, dayKey string, startIndex
 	return conversations, convIndex
 }
 
-// buildConversationsTimeBased groups logs using the (modelId, identityARN) +
-// 5-minute gap heuristic. This is the fallback for logs without session IDs.
-func buildConversationsTimeBased(dayLogs []model.InvocationLog, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
-	groups := make(map[groupKey][]model.InvocationLog)
-	for _, lg := range dayLogs {
-		k := groupKey{ModelID: lg.ModelID, IdentityARN: lg.Identity.ARN}
-		groups[k] = append(groups[k], lg)
+// buildConversationsTimeBased groups records using the
+// (provider, modelId, principal) + 5-minute gap heuristic. This is the
+// fallback for records without session IDs.
+func buildConversationsTimeBased(dayRecords []model.Record, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
+	groups := make(map[groupKey][]model.Record)
+	for _, rec := range dayRecords {
+		k := groupKey{Provider: rec.Provider, ModelID: rec.ModelID, Principal: rec.Identity.Principal}
+		groups[k] = append(groups[k], rec)
 	}
 
 	keys := make([]groupKey, 0, len(groups))
@@ -176,30 +179,33 @@ func buildConversationsTimeBased(dayLogs []model.InvocationLog, dayKey string, s
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Provider != keys[j].Provider {
+			return keys[i].Provider < keys[j].Provider
+		}
 		if keys[i].ModelID != keys[j].ModelID {
 			return keys[i].ModelID < keys[j].ModelID
 		}
-		return keys[i].IdentityARN < keys[j].IdentityARN
+		return keys[i].Principal < keys[j].Principal
 	})
 
 	convIndex := startIndex
 	var conversations []model.ConversationSummary
 
 	for _, k := range keys {
-		groupLogs := groups[k]
-		sort.Slice(groupLogs, func(i, j int) bool {
-			return groupLogs[i].Timestamp.Before(groupLogs[j].Timestamp)
+		groupRecords := groups[k]
+		sort.Slice(groupRecords, func(i, j int) bool {
+			return groupRecords[i].Timestamp.Before(groupRecords[j].Timestamp)
 		})
 
-		var conv []model.InvocationLog
-		for i, lg := range groupLogs {
-			if i > 0 && lg.Timestamp.Sub(groupLogs[i-1].Timestamp) > conversationGap {
+		var conv []model.Record
+		for i, rec := range groupRecords {
+			if i > 0 && rec.Timestamp.Sub(groupRecords[i-1].Timestamp) > conversationGap {
 				convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
 				convIndex++
 				conversations = append(conversations, buildConversationSummary(convID, conv))
 				conv = nil
 			}
-			conv = append(conv, lg)
+			conv = append(conv, rec)
 		}
 		if len(conv) > 0 {
 			convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
@@ -212,55 +218,55 @@ func buildConversationsTimeBased(dayLogs []model.InvocationLog, dayKey string, s
 }
 
 // buildConversationSummary creates a ConversationSummary from a slice of
-// chronologically ordered invocation logs belonging to one conversation.
-func buildConversationSummary(id string, logs []model.InvocationLog) model.ConversationSummary {
+// chronologically ordered invocation records belonging to one conversation.
+func buildConversationSummary(id string, records []model.Record) model.ConversationSummary {
 	summary := model.ConversationSummary{
 		ID:           id,
-		ModelID:      logs[0].ModelID,
-		IdentityARN:  logs[0].Identity.ARN,
-		StartTime:    logs[0].Timestamp,
-		EndTime:      logs[len(logs)-1].Timestamp,
-		MessageCount: len(logs),
+		ModelID:      records[0].ModelID,
+		Identity:     records[0].Identity.Principal,
+		StartTime:    records[0].Timestamp,
+		EndTime:      records[len(records)-1].Timestamp,
+		MessageCount: len(records),
 	}
 
-	invocations := make([]model.Invocation, 0, len(logs))
-	for _, log := range logs {
-		summary.InputTokens += log.Input.InputTokenCount
-		summary.OutputTokens += log.Output.OutputTokenCount
-		if log.ErrorCode != "" {
+	invocations := make([]model.Invocation, 0, len(records))
+	for _, rec := range records {
+		summary.InputTokens += rec.Input.TokenCount
+		summary.OutputTokens += rec.Output.TokenCount
+		if rec.ErrorCode != "" {
 			summary.ErrorCount++
 		}
 
 		invocations = append(invocations, model.Invocation{
-			Timestamp:    log.Timestamp,
-			RequestID:    log.RequestID,
-			ModelID:      log.ModelID,
-			Operation:    log.Operation,
-			Status:       log.Status,
-			ErrorCode:    log.ErrorCode,
-			InputBody:    prettyJSON(log.Input.InputBodyJSON),
-			OutputBody:   prettyJSON(log.Output.OutputBodyJSON),
-			InputTokens:  log.Input.InputTokenCount,
-			OutputTokens: log.Output.OutputTokenCount,
-			IdentityARN:  log.Identity.ARN,
+			Timestamp:    rec.Timestamp,
+			RequestID:    rec.RequestID,
+			ModelID:      rec.ModelID,
+			Operation:    rec.Operation,
+			Status:       rec.Status,
+			ErrorCode:    rec.ErrorCode,
+			InputBody:    prettyJSON(rec.Input.JSON),
+			OutputBody:   prettyJSON(rec.Output.JSON),
+			InputTokens:  rec.Input.TokenCount,
+			OutputTokens: rec.Output.TokenCount,
+			Identity:     rec.Identity.Principal,
 		})
 	}
 	summary.Invocations = invocations
 	return summary
 }
 
-// computeStats calculates aggregate statistics for a set of logs.
-func computeStats(logs []model.InvocationLog) model.Stats {
+// computeStats calculates aggregate statistics for a set of records.
+func computeStats(records []model.Record) model.Stats {
 	s := emptyStats()
-	s.InvocationCount = len(logs)
-	for _, log := range logs {
-		s.InputTokens += log.Input.InputTokenCount
-		s.OutputTokens += log.Output.OutputTokenCount
-		if log.ErrorCode != "" {
+	s.InvocationCount = len(records)
+	for _, rec := range records {
+		s.InputTokens += rec.Input.TokenCount
+		s.OutputTokens += rec.Output.TokenCount
+		if rec.ErrorCode != "" {
 			s.ErrorCount++
 		}
-		s.ModelBreakdown[log.ModelID]++
-		s.OpBreakdown[log.Operation]++
+		s.ModelBreakdown[rec.ModelID]++
+		s.OpBreakdown[rec.Operation]++
 	}
 	return s
 }

@@ -1,12 +1,20 @@
 # dressage
 
-Analyze AWS Bedrock model invocation logs to investigate opportunities for developing and improving coding harnesses. Fetches logs from S3, groups them into conversations, and generates a self-contained HTML report with per-day summaries and drill-down into individual request/response pairs.
+Analyze hosted LLM model invocation logs to investigate opportunities for developing and improving coding harnesses. Dressage fetches logs from a provider, normalizes them into a provider-neutral record, groups them into conversations, and generates a self-contained HTML report with per-day summaries and drill-down into individual request/response pairs. The conversation grouping and HTML drill-down are provider-agnostic; only the fetcher and the on-the-wire log schema differ per provider. AWS Bedrock is the first supported provider, with others on the way.
+
+## Supported providers
+
+| Provider | Status | Subcommand | Docs |
+|----------|--------|------------|------|
+| AWS Bedrock | Supported | `dressage bedrock` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
+| Azure OpenAI | Planned ([#5](https://github.com/rxbynerd/dressage/issues/5)) | — | [docs/providers/azure.md](docs/providers/azure.md) |
+| Vertex AI / Gemini | Planned ([#6](https://github.com/rxbynerd/dressage/issues/6)) | — | [docs/providers/vertex.md](docs/providers/vertex.md) |
 
 ## Prerequisites
 
-- Go 1.23+
-- AWS credentials with S3 read access to your Bedrock log bucket
-- [Bedrock model invocation logging](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html) enabled and configured to write to S3
+- Go 1.23+ (only to build from source)
+- Credentials and read access for the provider you are analyzing (see the
+  provider's docs page, e.g. [Bedrock](docs/providers/bedrock.md))
 
 ## Installation
 
@@ -24,34 +32,49 @@ go build -o dressage ./cmd/dressage/
 
 ## Usage
 
+Dressage uses a provider subcommand to choose the log source. Running `dressage`
+with no subcommand prints help.
+
 ```bash
-dressage --bucket my-bedrock-logs [flags]
+dressage bedrock --bucket my-bedrock-logs [flags]
 ```
 
 ### Flags
 
+`--start`, `--end`, and `--output` are persistent (root) flags shared by every
+provider and may be given before or after the subcommand:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
+| `--end` | | End date filter (YYYY-MM-DD, inclusive) |
+| `--output` | `report.html` | Output HTML file path |
+
+The `bedrock` subcommand adds S3-specific flags:
+
 | Flag | Required | Default | Description |
 |------|----------|---------|-------------|
 | `--bucket` | Yes | | S3 bucket containing Bedrock invocation logs |
-| `--prefix` | No | `""` | S3 key prefix (e.g., `logs/production`) |
+| `--prefix` | No | `""` | S3 key prefix (e.g. `prod/AWSLogs`) |
 | `--region` | No | from env | AWS region |
 | `--profile` | No | | AWS named profile |
-| `--start` | No | | Start date filter (YYYY-MM-DD, inclusive) |
-| `--end` | No | | End date filter (YYYY-MM-DD, inclusive) |
-| `--output` | No | `report.html` | Output HTML file path |
 
 ### Examples
 
 ```bash
 # Analyze all logs in a bucket
-dressage --bucket my-bedrock-logs
+dressage bedrock --bucket my-bedrock-logs
 
 # Filter to a specific date range using a named AWS profile
-dressage --bucket my-bedrock-logs --profile dev --start 2025-03-01 --end 2025-03-15
+dressage bedrock --bucket my-bedrock-logs --profile dev --start 2025-03-01 --end 2025-03-15
 
 # Specify a prefix and output path
-dressage --bucket my-bedrock-logs --prefix prod/AWSLogs --output march-report.html
+dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --output march-report.html
 ```
+
+See [docs/providers/bedrock.md](docs/providers/bedrock.md) for how Bedrock
+invocation logging works, how to enable it, the S3 key layout, and overflow
+payload handling.
 
 ## Report Structure
 
@@ -59,22 +82,10 @@ The generated HTML report is a single self-contained file (no external dependenc
 
 1. **Header** - Overall stats: total invocations, tokens, errors, date range, breakdowns by model and operation type
 2. **Day cards** - One collapsible section per day showing invocation count, token totals, and conversation count
-3. **Conversations** - Within each day, logs are grouped into conversations (same model + identity ARN, within 5-minute gaps). Shows message count, token usage, and time range
+3. **Conversations** - Within each day, records are grouped into conversations (same provider, model, and identity, within 5-minute gaps). Shows message count, token usage, and time range
 4. **Invocations** - Each individual request/response pair with pretty-printed JSON bodies, operation type, status, and token counts
 
 All drill-down uses native HTML `<details>/<summary>` elements - no JavaScript required.
-
-## How Bedrock Logging Works
-
-Bedrock stores invocation logs as gzipped NDJSON files in S3 at:
-
-```
-s3://{bucket}/{prefix}/AWSLogs/{accountId}/BedrockModelInvocationLogs/{region}/YYYY/MM/DD/HH/*.json.gz
-```
-
-Each log record contains the full request and response JSON bodies (up to 100KB), token counts, model ID, operation type (Converse, ConverseStream, InvokeModel, InvokeModelWithResponseStream), caller identity, and timestamps.
-
-To enable logging, see the [AWS documentation](https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html).
 
 ## License
 

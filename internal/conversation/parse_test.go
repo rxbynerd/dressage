@@ -43,7 +43,7 @@ func TestExtractSessionID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractSessionID(json.RawMessage(tc.input))
+			got := ExtractSessionID("bedrock", json.RawMessage(tc.input))
 			if got != tc.want {
 				t.Errorf("ExtractSessionID() = %q, want %q", got, tc.want)
 			}
@@ -312,37 +312,39 @@ func TestReconstructConversation(t *testing.T) {
 		{"type":"message_stop","amazon-bedrock-invocationMetrics":{"inputTokenCount":100,"outputTokenCount":15,"invocationLatency":1500,"firstByteLatency":80}}
 	]`
 
-	logs := []model.InvocationLog{
+	logs := []model.Record{
 		{
+			Provider:  "bedrock",
 			Timestamp: base,
 			RequestID: "req-1",
 			ModelID:   "claude-opus-4-6",
 			Operation: "InvokeModelWithResponseStream",
 			Status:    "200",
-			Identity:  model.Identity{ARN: "arn:aws:iam::123:user/alice"},
-			Input: model.InvocationInput{
-				InputBodyJSON:   json.RawMessage(inv1Input),
-				InputTokenCount: 50,
+			Identity:  model.Identity{Principal: "arn:aws:iam::123:user/alice"},
+			Input: model.Body{
+				JSON:       json.RawMessage(inv1Input),
+				TokenCount: 50,
 			},
-			Output: model.InvocationOutput{
-				OutputBodyJSON:   json.RawMessage(inv1Output),
-				OutputTokenCount: 30,
+			Output: model.Body{
+				JSON:       json.RawMessage(inv1Output),
+				TokenCount: 30,
 			},
 		},
 		{
+			Provider:  "bedrock",
 			Timestamp: base.Add(5 * time.Second),
 			RequestID: "req-2",
 			ModelID:   "claude-opus-4-6",
 			Operation: "InvokeModelWithResponseStream",
 			Status:    "200",
-			Identity:  model.Identity{ARN: "arn:aws:iam::123:user/alice"},
-			Input: model.InvocationInput{
-				InputBodyJSON:   json.RawMessage(inv2Input),
-				InputTokenCount: 100,
+			Identity:  model.Identity{Principal: "arn:aws:iam::123:user/alice"},
+			Input: model.Body{
+				JSON:       json.RawMessage(inv2Input),
+				TokenCount: 100,
 			},
-			Output: model.InvocationOutput{
-				OutputBodyJSON:   json.RawMessage(inv2Output),
-				OutputTokenCount: 15,
+			Output: model.Body{
+				JSON:       json.RawMessage(inv2Output),
+				TokenCount: 15,
 			},
 		},
 	}

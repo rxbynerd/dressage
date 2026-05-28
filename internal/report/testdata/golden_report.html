@@ -1,0 +1,1152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bedrock Invocation Log Report</title>
+<style>
+  :root {
+    --bg: #fafafa;
+    --surface: #fff;
+    --border: #e0e0e0;
+    --text: #1a1a1a;
+    --text-muted: #666;
+    --accent: #2563eb;
+    --accent-light: #eff6ff;
+    --error: #dc2626;
+    --error-light: #fef2f2;
+    --success: #16a34a;
+    --success-light: #f0fdf4;
+    --purple: #7c3aed;
+    --purple-light: #f5f3ff;
+    --amber: #d97706;
+    --amber-light: #fffbeb;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; font-weight: 600; }
+  h2 { font-size: 1.2rem; font-weight: 600; }
+  h3 { font-size: 1rem; font-weight: 600; }
+
+  .header {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  .header h1 { margin-bottom: 0.75rem; }
+  .meta { color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1rem; }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+  }
+  .stat-card {
+    background: var(--accent-light);
+    border-radius: 6px;
+    padding: 0.75rem 1rem;
+  }
+  .stat-card .label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-card .value { font-size: 1.5rem; font-weight: 700; color: var(--accent); font-family: var(--mono); }
+  .stat-card.error .value { color: var(--error); }
+  .stat-card.error { background: var(--error-light); }
+
+  .breakdown {
+    margin-top: 1rem;
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+  .breakdown-section h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.25rem; }
+  .breakdown-list { list-style: none; font-size: 0.875rem; }
+  .breakdown-list li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.1rem 0; }
+  .breakdown-list .count { font-family: var(--mono); color: var(--accent); font-weight: 600; }
+
+  details { margin-bottom: 0.5rem; }
+  details > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  details > summary::-webkit-details-marker { display: none; }
+
+  .day-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+  }
+  .day-header {
+    padding: 1rem 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .day-header .arrow {
+    transition: transform 0.2s;
+    margin-right: 0.5rem;
+    display: inline-block;
+  }
+  details[open] > summary .arrow { transform: rotate(90deg); }
+  .day-date { font-weight: 600; font-size: 1.1rem; }
+  .day-stats {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.875rem;
+    color: var(--text-muted);
+  }
+  .day-stats span { font-family: var(--mono); color: var(--text); font-weight: 500; }
+  .day-body { padding: 0 1.5rem 1rem; }
+
+  .conv-card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+  }
+  .conv-header {
+    padding: 0.75rem 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+  .conv-id { font-family: var(--mono); font-weight: 600; font-size: 0.8rem; }
+  .conv-model {
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
+  .conv-session {
+    background: var(--purple-light);
+    color: var(--purple);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-family: var(--mono);
+  }
+  .conv-stats {
+    display: flex;
+    gap: 1rem;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+  .conv-stats span { font-family: var(--mono); color: var(--text); }
+  .conv-body { padding: 0 1rem 0.75rem; }
+
+   
+  .chat-container { margin-bottom: 1rem; }
+
+  .chat-section {
+    margin-bottom: 0.5rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+  }
+  .chat-section summary {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    background: #f8f8f8;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+  }
+  .chat-section[open] summary { border-radius: 6px 6px 0 0; }
+  .chat-section .section-body {
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-radius: 0 0 6px 6px;
+    max-height: 300px;
+    overflow-y: auto;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    font-family: var(--mono);
+    line-height: 1.4;
+  }
+
+  .tool-list {
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-top: 0;
+    border-radius: 0 0 6px 6px;
+  }
+  .tool-list-item {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.2rem 0;
+    font-size: 0.8rem;
+  }
+  .tool-list-name {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--purple);
+    white-space: nowrap;
+  }
+  .tool-list-desc {
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .chat-msg {
+    margin-bottom: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+  .chat-msg.user {
+    background: var(--accent-light);
+    border-left: 3px solid var(--accent);
+  }
+  .chat-msg.assistant {
+    background: var(--success-light);
+    border-left: 3px solid var(--success);
+  }
+  .chat-role {
+    font-weight: 700;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+  }
+  .chat-msg.user .chat-role { color: var(--accent); }
+  .chat-msg.assistant .chat-role { color: var(--success); }
+
+  .content-block { margin-bottom: 0.4rem; }
+  .content-block:last-child { margin-bottom: 0; }
+
+  .block-text {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .block-thinking {
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    padding: 0.5rem;
+    margin: 0.25rem 0;
+  }
+  .block-thinking summary {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .block-thinking .thinking-content {
+    margin-top: 0.4rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  .block-tool {
+    background: #f8f8f8;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+  }
+  .block-tool summary {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .block-tool .tool-badge {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--purple);
+    font-size: 0.75rem;
+  }
+  .block-tool .tool-id {
+    font-family: var(--mono);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+  }
+  .block-tool .tool-body {
+    padding: 0.4rem 0.6rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+
+  .block-result {
+    background: #fefefe;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+  }
+  .block-result.error-result {
+    border-color: var(--error);
+    background: var(--error-light);
+  }
+  .block-result summary {
+    padding: 0.4rem 0.6rem;
+    font-size: 0.8rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .block-result .result-label {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+  .block-result.error-result .result-label { color: var(--error); }
+  .block-result .result-body {
+    padding: 0.4rem 0.6rem;
+    border-top: 1px solid var(--border);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+    line-height: 1.4;
+  }
+
+  .turn-metrics {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--mono);
+    margin-top: 0.5rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed var(--border);
+  }
+  .turn-metrics .metric-label { color: var(--text-muted); }
+  .turn-metrics .metric-value { color: var(--text); font-weight: 500; }
+
+   
+  .invocation {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+    font-size: 0.8rem;
+  }
+  .inv-header {
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    background: #f8f8f8;
+    border-radius: 4px 4px 0 0;
+  }
+  .inv-meta { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+  .inv-time { font-family: var(--mono); color: var(--text-muted); }
+  .inv-op {
+    background: #f0fdf4;
+    color: var(--success);
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+  .inv-status { font-family: var(--mono); }
+  .inv-status.error { color: var(--error); font-weight: 600; }
+  .inv-status.ok { color: var(--success); }
+  .inv-tokens { font-family: var(--mono); color: var(--text-muted); }
+  .inv-body { padding: 0.5rem 0.75rem; }
+  .inv-section { margin-bottom: 0.5rem; }
+  .inv-section-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 0.25rem;
+    font-weight: 600;
+  }
+  pre.json {
+    background: #f5f5f5;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.75rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    max-height: 400px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+
+  .empty { color: var(--text-muted); font-style: italic; padding: 2rem; text-align: center; }
+
+  .section-divider {
+    margin: 0.75rem 0;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    font-weight: 600;
+  }
+
+  @media (max-width: 768px) {
+    body { padding: 1rem; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+    .day-header { flex-direction: column; align-items: flex-start; }
+    .day-stats { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Bedrock Invocation Log Report</h1>
+  <div class="meta">
+    Generated 2024-01-20 12:00:00 UTC
+     &middot; 2024-01-15 to 2024-01-15
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Invocations</div>
+      <div class="value">4</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Input Tokens</div>
+      <div class="value">187</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Output Tokens</div>
+      <div class="value">56</div>
+    </div>
+    <div class="stat-card error">
+      <div class="label">Errors</div>
+      <div class="value">1</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Days</div>
+      <div class="value">1</div>
+    </div>
+  </div>
+  
+  <div class="breakdown">
+    
+    <div class="breakdown-section">
+      <h3>By Model</h3>
+      <ul class="breakdown-list">
+        
+        <li><span>claude-haiku-4-5</span> <span class="count">1</span></li>
+        
+        <li><span>claude-opus-4-6</span> <span class="count">3</span></li>
+        
+      </ul>
+    </div>
+    
+    
+    <div class="breakdown-section">
+      <h3>By Operation</h3>
+      <ul class="breakdown-list">
+        
+        <li><span>Converse</span> <span class="count">1</span></li>
+        
+        <li><span>InvokeModelWithResponseStream</span> <span class="count">3</span></li>
+        
+      </ul>
+    </div>
+    
+  </div>
+  
+</div>
+
+
+
+
+<details class="day-card" open>
+  <summary class="day-header">
+    <div>
+      <span class="arrow">&#9654;</span>
+      <span class="day-date">2024-01-15</span>
+    </div>
+    <div class="day-stats">
+      <div>Invocations: <span>4</span></div>
+      <div>In: <span>187</span></div>
+      <div>Out: <span>56</span></div>
+      <div>Errors: <span style="color:var(--error)">1</span></div>
+      <div>Conversations: <span>3</span></div>
+    </div>
+  </summary>
+  <div class="day-body">
+    
+    <details class="conv-card">
+      <summary class="conv-header">
+        <div class="inv-meta">
+          <span class="arrow">&#9654;</span>
+          <span class="conv-id">conv-20240115-0</span>
+          <span class="conv-model">claude-opus-4-6</span>
+          <span class="conv-session">session:sess-aaa</span>
+        </div>
+        <div class="conv-stats">
+          <div>Turns: <span>4</span></div>
+          <div>Invocations: <span>2</span></div>
+          <div>In: <span>170</span></div>
+          <div>Out: <span>48</span></div>
+          <div>10:00:00 &ndash; 10:00:08</div>
+        </div>
+      </summary>
+      <div class="conv-body">
+
+        
+        
+        <div class="chat-container">
+
+          
+          <details class="chat-section">
+            <summary><span class="arrow">&#9654;</span> System Prompt (35 chars)</summary>
+            <div class="section-body">You are a helpful coding assistant.</div>
+          </details>
+          
+
+          
+          <details class="chat-section">
+            <summary><span class="arrow">&#9654;</span> Available Tools (2)</summary>
+            <div class="tool-list">
+              
+              <div class="tool-list-item">
+                <span class="tool-list-name">Read</span>
+                <span class="tool-list-desc">Reads a file from disk</span>
+              </div>
+              
+              <div class="tool-list-item">
+                <span class="tool-list-name">Bash</span>
+                <span class="tool-list-desc">Runs a shell command</span>
+              </div>
+              
+            </div>
+          </details>
+          
+
+          
+          <div class="chat-msg user">
+            <div class="chat-role">user</div>
+
+            
+              
+                
+                <div class="content-block block-text">Read config.yaml and summarize it.</div>
+                
+
+              
+            
+
+            
+          </div>
+          
+          <div class="chat-msg assistant">
+            <div class="chat-role">assistant</div>
+
+            
+              
+                <details class="content-block block-thinking">
+                  <summary><span class="arrow">&#9654;</span> Thinking (33 chars)</summary>
+                  <div class="thinking-content">The user wants me to read a file.</div>
+                </details>
+
+              
+            
+              
+                
+                <div class="content-block block-text">I&#39;ll read it now.</div>
+                
+
+              
+            
+              
+                <details class="content-block block-tool">
+                  <summary>
+                    <span class="arrow">&#9654;</span>
+                    <span class="tool-badge">Read</span>
+                    <span class="tool-id">toolu_a1</span>
+                  </summary>
+                  <div class="tool-body">{
+  &#34;file_path&#34;: &#34;config.yaml&#34;
+}</div>
+                </details>
+
+              
+            
+
+            
+            <div class="turn-metrics">
+              <div><span class="metric-label">time</span> <span class="metric-value">10:00:00</span></div>
+              <div><span class="metric-label">in</span> <span class="metric-value">50</span></div>
+              <div><span class="metric-label">out</span> <span class="metric-value">30</span></div>
+              
+              
+              <div><span class="metric-label">latency</span> <span class="metric-value">2.2s</span></div>
+              <div><span class="metric-label">ttfb</span> <span class="metric-value">180ms</span></div>
+              <div><span class="metric-label">stop</span> <span class="metric-value">tool_use</span></div>
+              <div><span class="metric-label">model</span> <span class="metric-value">claude-opus-4-6</span></div>
+            </div>
+            
+          </div>
+          
+          <div class="chat-msg user">
+            <div class="chat-role">user</div>
+
+            
+              
+                <details class="content-block block-result">
+                  <summary>
+                    <span class="arrow">&#9654;</span>
+                    <span class="result-label">Result for toolu_a1</span>
+                  </summary>
+                  <div class="result-body">port: 8080
+host: localhost</div>
+                </details>
+
+              
+            
+
+            
+          </div>
+          
+          <div class="chat-msg assistant">
+            <div class="chat-role">assistant</div>
+
+            
+              
+                
+                <div class="content-block block-text">The config sets port 8080 on localhost.</div>
+                
+
+              
+            
+
+            
+            <div class="turn-metrics">
+              <div><span class="metric-label">time</span> <span class="metric-value">10:00:08</span></div>
+              <div><span class="metric-label">in</span> <span class="metric-value">120</span></div>
+              <div><span class="metric-label">out</span> <span class="metric-value">18</span></div>
+              <div><span class="metric-label">cache-read</span> <span class="metric-value">40</span></div>
+              <div><span class="metric-label">cache-write</span> <span class="metric-value">10</span></div>
+              <div><span class="metric-label">latency</span> <span class="metric-value">1.6s</span></div>
+              <div><span class="metric-label">ttfb</span> <span class="metric-value">120ms</span></div>
+              <div><span class="metric-label">stop</span> <span class="metric-value">end_turn</span></div>
+              <div><span class="metric-label">model</span> <span class="metric-value">claude-opus-4-6</span></div>
+            </div>
+            
+          </div>
+          
+
+        </div>
+        
+
+        
+        <details>
+          <summary class="section-divider"><span class="arrow">&#9654;</span> Raw Invocations (2)</summary>
+          <div style="margin-top: 0.5rem;">
+          
+          <details class="invocation">
+            <summary class="inv-header">
+              <div class="inv-meta">
+                <span class="arrow">&#9654;</span>
+                <span class="inv-time">10:00:00</span>
+                <span class="inv-op">InvokeModelWithResponseStream</span>
+                <span class="inv-status error">200</span>
+              </div>
+              <div class="inv-tokens">in:50 out:30</div>
+            </summary>
+            <div class="inv-body">
+              <div class="inv-section">
+                <div class="inv-section-label">Request (req-a1)</div>
+                <pre class="json">{
+  &#34;messages&#34;: [
+    {
+      &#34;content&#34;: &#34;Read config.yaml and summarize it.&#34;,
+      &#34;role&#34;: &#34;user&#34;
+    }
+  ],
+  &#34;metadata&#34;: {
+    &#34;user_id&#34;: &#34;user_hash_account__session_sess-aaaa-1111&#34;
+  },
+  &#34;system&#34;: &#34;You are a helpful coding assistant.&#34;,
+  &#34;tools&#34;: [
+    {
+      &#34;description&#34;: &#34;Reads a file from disk&#34;,
+      &#34;name&#34;: &#34;Read&#34;
+    },
+    {
+      &#34;description&#34;: &#34;Runs a shell command&#34;,
+      &#34;name&#34;: &#34;Bash&#34;
+    }
+  ]
+}</pre>
+              </div>
+              <div class="inv-section">
+                <div class="inv-section-label">Response</div>
+                <pre class="json">[
+  {
+    &#34;message&#34;: {
+      &#34;content&#34;: [],
+      &#34;id&#34;: &#34;msg_a1&#34;,
+      &#34;role&#34;: &#34;assistant&#34;,
+      &#34;usage&#34;: {
+        &#34;input_tokens&#34;: 50,
+        &#34;output_tokens&#34;: 0
+      }
+    },
+    &#34;type&#34;: &#34;message_start&#34;
+  },
+  {
+    &#34;content_block&#34;: {
+      &#34;thinking&#34;: &#34;&#34;,
+      &#34;type&#34;: &#34;thinking&#34;
+    },
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_start&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;thinking&#34;: &#34;The user wants me to read a file.&#34;,
+      &#34;type&#34;: &#34;thinking_delta&#34;
+    },
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_delta&#34;
+  },
+  {
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_stop&#34;
+  },
+  {
+    &#34;content_block&#34;: {
+      &#34;text&#34;: &#34;&#34;,
+      &#34;type&#34;: &#34;text&#34;
+    },
+    &#34;index&#34;: 1,
+    &#34;type&#34;: &#34;content_block_start&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;text&#34;: &#34;I&#39;ll read it now.&#34;,
+      &#34;type&#34;: &#34;text_delta&#34;
+    },
+    &#34;index&#34;: 1,
+    &#34;type&#34;: &#34;content_block_delta&#34;
+  },
+  {
+    &#34;index&#34;: 1,
+    &#34;type&#34;: &#34;content_block_stop&#34;
+  },
+  {
+    &#34;content_block&#34;: {
+      &#34;id&#34;: &#34;toolu_a1&#34;,
+      &#34;input&#34;: &#34;&#34;,
+      &#34;name&#34;: &#34;Read&#34;,
+      &#34;type&#34;: &#34;tool_use&#34;
+    },
+    &#34;index&#34;: 2,
+    &#34;type&#34;: &#34;content_block_start&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;partial_json&#34;: &#34;{\&#34;file_path\&#34;:\&#34;config.yaml\&#34;}&#34;,
+      &#34;type&#34;: &#34;input_json_delta&#34;
+    },
+    &#34;index&#34;: 2,
+    &#34;type&#34;: &#34;content_block_delta&#34;
+  },
+  {
+    &#34;index&#34;: 2,
+    &#34;type&#34;: &#34;content_block_stop&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;stop_reason&#34;: &#34;tool_use&#34;
+    },
+    &#34;type&#34;: &#34;message_delta&#34;,
+    &#34;usage&#34;: {
+      &#34;output_tokens&#34;: 30
+    }
+  },
+  {
+    &#34;amazon-bedrock-invocationMetrics&#34;: {
+      &#34;firstByteLatency&#34;: 180,
+      &#34;inputTokenCount&#34;: 50,
+      &#34;invocationLatency&#34;: 2200,
+      &#34;outputTokenCount&#34;: 30
+    },
+    &#34;type&#34;: &#34;message_stop&#34;
+  }
+]</pre>
+              </div>
+            </div>
+          </details>
+          
+          <details class="invocation">
+            <summary class="inv-header">
+              <div class="inv-meta">
+                <span class="arrow">&#9654;</span>
+                <span class="inv-time">10:00:08</span>
+                <span class="inv-op">InvokeModelWithResponseStream</span>
+                <span class="inv-status error">200</span>
+              </div>
+              <div class="inv-tokens">in:120 out:18</div>
+            </summary>
+            <div class="inv-body">
+              <div class="inv-section">
+                <div class="inv-section-label">Request (req-a2)</div>
+                <pre class="json">{
+  &#34;messages&#34;: [
+    {
+      &#34;content&#34;: &#34;Read config.yaml and summarize it.&#34;,
+      &#34;role&#34;: &#34;user&#34;
+    },
+    {
+      &#34;content&#34;: [
+        {
+          &#34;thinking&#34;: &#34;The user wants me to read a file.&#34;,
+          &#34;type&#34;: &#34;thinking&#34;
+        },
+        {
+          &#34;text&#34;: &#34;I&#39;ll read it now.&#34;,
+          &#34;type&#34;: &#34;text&#34;
+        },
+        {
+          &#34;id&#34;: &#34;toolu_a1&#34;,
+          &#34;input&#34;: {
+            &#34;file_path&#34;: &#34;config.yaml&#34;
+          },
+          &#34;name&#34;: &#34;Read&#34;,
+          &#34;type&#34;: &#34;tool_use&#34;
+        }
+      ],
+      &#34;role&#34;: &#34;assistant&#34;
+    },
+    {
+      &#34;content&#34;: [
+        {
+          &#34;content&#34;: &#34;port: 8080\nhost: localhost&#34;,
+          &#34;tool_use_id&#34;: &#34;toolu_a1&#34;,
+          &#34;type&#34;: &#34;tool_result&#34;
+        }
+      ],
+      &#34;role&#34;: &#34;user&#34;
+    }
+  ],
+  &#34;metadata&#34;: {
+    &#34;user_id&#34;: &#34;user_hash_account__session_sess-aaaa-1111&#34;
+  },
+  &#34;system&#34;: &#34;You are a helpful coding assistant.&#34;,
+  &#34;tools&#34;: [
+    {
+      &#34;description&#34;: &#34;Reads a file from disk&#34;,
+      &#34;name&#34;: &#34;Read&#34;
+    },
+    {
+      &#34;description&#34;: &#34;Runs a shell command&#34;,
+      &#34;name&#34;: &#34;Bash&#34;
+    }
+  ]
+}</pre>
+              </div>
+              <div class="inv-section">
+                <div class="inv-section-label">Response</div>
+                <pre class="json">[
+  {
+    &#34;message&#34;: {
+      &#34;content&#34;: [],
+      &#34;id&#34;: &#34;msg_a2&#34;,
+      &#34;role&#34;: &#34;assistant&#34;,
+      &#34;usage&#34;: {
+        &#34;cache_creation_input_tokens&#34;: 10,
+        &#34;cache_read_input_tokens&#34;: 40,
+        &#34;input_tokens&#34;: 120,
+        &#34;output_tokens&#34;: 0
+      }
+    },
+    &#34;type&#34;: &#34;message_start&#34;
+  },
+  {
+    &#34;content_block&#34;: {
+      &#34;text&#34;: &#34;&#34;,
+      &#34;type&#34;: &#34;text&#34;
+    },
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_start&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;text&#34;: &#34;The config sets port 8080 on localhost.&#34;,
+      &#34;type&#34;: &#34;text_delta&#34;
+    },
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_delta&#34;
+  },
+  {
+    &#34;index&#34;: 0,
+    &#34;type&#34;: &#34;content_block_stop&#34;
+  },
+  {
+    &#34;delta&#34;: {
+      &#34;stop_reason&#34;: &#34;end_turn&#34;
+    },
+    &#34;type&#34;: &#34;message_delta&#34;,
+    &#34;usage&#34;: {
+      &#34;output_tokens&#34;: 18
+    }
+  },
+  {
+    &#34;amazon-bedrock-invocationMetrics&#34;: {
+      &#34;cacheReadInputTokenCount&#34;: 40,
+      &#34;cacheWriteInputTokenCount&#34;: 10,
+      &#34;firstByteLatency&#34;: 120,
+      &#34;inputTokenCount&#34;: 120,
+      &#34;invocationLatency&#34;: 1600,
+      &#34;outputTokenCount&#34;: 18
+    },
+    &#34;type&#34;: &#34;message_stop&#34;
+  }
+]</pre>
+              </div>
+            </div>
+          </details>
+          
+          </div>
+        </details>
+
+      </div>
+    </details>
+    
+    <details class="conv-card">
+      <summary class="conv-header">
+        <div class="inv-meta">
+          <span class="arrow">&#9654;</span>
+          <span class="conv-id">conv-20240115-1</span>
+          <span class="conv-model">claude-opus-4-6</span>
+          <span class="conv-session">session:sess-bbb</span>
+        </div>
+        <div class="conv-stats">
+          <div>Turns: <span>2</span></div>
+          <div>Invocations: <span>1</span></div>
+          <div>In: <span>12</span></div>
+          <div>Out: <span>8</span></div>
+          <div>10:20:00 &ndash; 10:20:00</div>
+        </div>
+      </summary>
+      <div class="conv-body">
+
+        
+        
+        <div class="chat-container">
+
+          
+          <details class="chat-section">
+            <summary><span class="arrow">&#9654;</span> System Prompt (34 chars)</summary>
+            <div class="section-body">System part one.
+
+System part two.</div>
+          </details>
+          
+
+          
+
+          
+          <div class="chat-msg user">
+            <div class="chat-role">user</div>
+
+            
+              
+                
+                <div class="content-block block-text">What is 2&#43;2?</div>
+                
+
+              
+            
+
+            
+          </div>
+          
+          <div class="chat-msg assistant">
+            <div class="chat-role">assistant</div>
+
+            
+              
+                
+                <div class="content-block block-text">2 &#43; 2 = 4.</div>
+                
+
+              
+            
+
+            
+            <div class="turn-metrics">
+              <div><span class="metric-label">time</span> <span class="metric-value">10:20:00</span></div>
+              <div><span class="metric-label">in</span> <span class="metric-value">12</span></div>
+              <div><span class="metric-label">out</span> <span class="metric-value">8</span></div>
+              
+              
+              
+              
+              
+              <div><span class="metric-label">model</span> <span class="metric-value">claude-opus-4-6</span></div>
+            </div>
+            
+          </div>
+          
+
+        </div>
+        
+
+        
+        <details>
+          <summary class="section-divider"><span class="arrow">&#9654;</span> Raw Invocations (1)</summary>
+          <div style="margin-top: 0.5rem;">
+          
+          <details class="invocation">
+            <summary class="inv-header">
+              <div class="inv-meta">
+                <span class="arrow">&#9654;</span>
+                <span class="inv-time">10:20:00</span>
+                <span class="inv-op">Converse</span>
+                <span class="inv-status error">200</span>
+              </div>
+              <div class="inv-tokens">in:12 out:8</div>
+            </summary>
+            <div class="inv-body">
+              <div class="inv-section">
+                <div class="inv-section-label">Request (req-b1)</div>
+                <pre class="json">{
+  &#34;messages&#34;: [
+    {
+      &#34;content&#34;: &#34;What is 2&#43;2?&#34;,
+      &#34;role&#34;: &#34;user&#34;
+    }
+  ],
+  &#34;metadata&#34;: {
+    &#34;user_id&#34;: &#34;user_hash_account__session_sess-bbbb-2222&#34;
+  },
+  &#34;system&#34;: [
+    {
+      &#34;text&#34;: &#34;System part one.&#34;,
+      &#34;type&#34;: &#34;text&#34;
+    },
+    {
+      &#34;text&#34;: &#34;System part two.&#34;,
+      &#34;type&#34;: &#34;text&#34;
+    }
+  ],
+  &#34;tools&#34;: []
+}</pre>
+              </div>
+              <div class="inv-section">
+                <div class="inv-section-label">Response</div>
+                <pre class="json">{
+  &#34;content&#34;: [
+    {
+      &#34;text&#34;: &#34;2 &#43; 2 = 4.&#34;,
+      &#34;type&#34;: &#34;text&#34;
+    }
+  ],
+  &#34;id&#34;: &#34;msg_b1&#34;,
+  &#34;role&#34;: &#34;assistant&#34;,
+  &#34;stop_reason&#34;: &#34;end_turn&#34;
+}</pre>
+              </div>
+            </div>
+          </details>
+          
+          </div>
+        </details>
+
+      </div>
+    </details>
+    
+    <details class="conv-card">
+      <summary class="conv-header">
+        <div class="inv-meta">
+          <span class="arrow">&#9654;</span>
+          <span class="conv-id">conv-20240115-2</span>
+          <span class="conv-model">claude-haiku-4-5</span>
+          
+        </div>
+        <div class="conv-stats">
+          <div>Messages: <span>1</span></div>
+          <div>Invocations: <span>1</span></div>
+          <div>In: <span>5</span></div>
+          <div>Out: <span>0</span></div>
+          <div>10:40:00 &ndash; 10:40:00</div>
+        </div>
+      </summary>
+      <div class="conv-body">
+
+        
+
+        
+        <details>
+          <summary class="section-divider"><span class="arrow">&#9654;</span> Raw Invocations (1)</summary>
+          <div style="margin-top: 0.5rem;">
+          
+          <details class="invocation">
+            <summary class="inv-header">
+              <div class="inv-meta">
+                <span class="arrow">&#9654;</span>
+                <span class="inv-time">10:40:00</span>
+                <span class="inv-op">InvokeModelWithResponseStream</span>
+                <span class="inv-status error">429 (ThrottlingException)</span>
+              </div>
+              <div class="inv-tokens">in:5 out:0</div>
+            </summary>
+            <div class="inv-body">
+              <div class="inv-section">
+                <div class="inv-section-label">Request (req-c1)</div>
+                <pre class="json">{
+  &#34;messages&#34;: [
+    {
+      &#34;content&#34;: &#34;hello&#34;,
+      &#34;role&#34;: &#34;user&#34;
+    }
+  ]
+}</pre>
+              </div>
+              <div class="inv-section">
+                <div class="inv-section-label">Response</div>
+                <pre class="json"></pre>
+              </div>
+            </div>
+          </details>
+          
+          </div>
+        </details>
+
+      </div>
+    </details>
+    
+  </div>
+</details>
+
+
+</body>
+</html>

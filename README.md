@@ -7,7 +7,7 @@ Analyze hosted LLM model invocation logs to investigate opportunities for develo
 | Provider | Status | Subcommand | Docs |
 |----------|--------|------------|------|
 | AWS Bedrock | Supported | `dressage bedrock` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
-| Azure OpenAI | Planned ([#5](https://github.com/rxbynerd/dressage/issues/5)) | — | [docs/providers/azure.md](docs/providers/azure.md) |
+| Azure OpenAI | Supported | `dressage azure` | [docs/providers/azure.md](docs/providers/azure.md) |
 | Vertex AI / Gemini | Planned ([#6](https://github.com/rxbynerd/dressage/issues/6)) | — | [docs/providers/vertex.md](docs/providers/vertex.md) |
 
 ## Prerequisites
@@ -37,6 +37,7 @@ with no subcommand prints help.
 
 ```bash
 dressage bedrock --bucket my-bedrock-logs [flags]
+dressage azure --workspace <log-analytics-workspace-id> [flags]
 ```
 
 ### Flags
@@ -59,6 +60,15 @@ The `bedrock` subcommand adds S3-specific flags:
 | `--region` | No | from env | AWS region |
 | `--profile` | No | | AWS named profile |
 
+The `azure` subcommand adds Log Analytics-specific flags:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--workspace` | Yes | | Log Analytics workspace ID (GUID) |
+| `--subscription` | No | | Subscription ID narrowing filter |
+| `--resource` | No | | Azure OpenAI resource ID (or substring) narrowing filter |
+| `--tenant` | No | | Microsoft Entra tenant ID for authentication |
+
 ### Examples
 
 ```bash
@@ -70,11 +80,19 @@ dressage bedrock --bucket my-bedrock-logs --profile dev --start 2025-03-01 --end
 
 # Specify a prefix and output path
 dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --output march-report.html
+
+# Analyze Azure OpenAI logs from a Log Analytics workspace
+dressage azure --workspace 11111111-2222-3333-4444-555555555555
+
+# Filter to a date range and narrow to one resource
+dressage azure --workspace 11111111-2222-3333-4444-555555555555 \
+  --resource my-aoai --start 2025-03-01 --end 2025-03-15
 ```
 
 See [docs/providers/bedrock.md](docs/providers/bedrock.md) for how Bedrock
-invocation logging works, how to enable it, the S3 key layout, and overflow
-payload handling.
+invocation logging works, and [docs/providers/azure.md](docs/providers/azure.md)
+for how to enable Azure OpenAI diagnostic logging, the content-logging caveat,
+and required RBAC.
 
 ## Report Structure
 

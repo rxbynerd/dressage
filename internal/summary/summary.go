@@ -100,19 +100,41 @@ type groupKey struct {
 	Principal string
 }
 
+// sessionKey identifies a session-grouped conversation. The provider is part of
+// the key because session ids are extracted per-provider and may collide across
+// providers (e.g. a substring shared between a Bedrock and an Azure session id);
+// keying on the session id alone would merge unrelated records and then decode
+// them with the wrong envelope in Reconstruct.
+type sessionKey struct {
+	Provider string
+	SID      string
+}
+
+// shortID returns at most the first 8 characters of s, used for log lines. It
+// is a safe replacement for s[:8], which panics on shorter strings.
+func shortID(s string) string {
+	if len(s) > 8 {
+		return s[:8]
+	}
+	return s
+}
+
 // buildConversations groups a day's records into conversations.
 // It first attempts session-based grouping using the session ID extracted from
 // the request body (used by Claude Code). Records without session IDs fall
 // back to the (provider, modelId, principal) + 5-minute gap heuristic.
 func buildConversations(dayRecords []model.Record, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
-	// Partition records: those with session IDs vs those without.
-	sessionGroups := make(map[string][]model.Record)
+	// Partition records: those with session IDs vs those without. Session groups
+	// are keyed on (provider, session id) so that records from different
+	// providers are never merged even when their session ids collide.
+	sessionGroups := make(map[sessionKey][]model.Record)
 	var noSessionRecords []model.Record
 
 	for _, rec := range dayRecords {
-		sid := conversation.ExtractSessionID(rec.Provider, rec.Input.JSON)
+		sid := conversation.ExtractSessionID(rec.Provider, rec.ModelID, rec.Input.JSON)
 		if sid != "" {
-			sessionGroups[sid] = append(sessionGroups[sid], rec)
+			key := sessionKey{Provider: rec.Provider, SID: sid}
+			sessionGroups[key] = append(sessionGroups[key], rec)
 		} else {
 			noSessionRecords = append(noSessionRecords, rec)
 		}
@@ -121,15 +143,22 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 	convIndex := startIndex
 	var conversations []model.ConversationSummary
 
-	// Process session-based groups.
-	sessionIDs := make([]string, 0, len(sessionGroups))
-	for sid := range sessionGroups {
-		sessionIDs = append(sessionIDs, sid)
+	// Process session-based groups, ordered by provider then session id for
+	// deterministic output. For single-provider input every provider is equal,
+	// so this collapses to session-id order.
+	sessionKeys := make([]sessionKey, 0, len(sessionGroups))
+	for key := range sessionGroups {
+		sessionKeys = append(sessionKeys, key)
 	}
-	sort.Strings(sessionIDs)
+	sort.Slice(sessionKeys, func(i, j int) bool {
+		if sessionKeys[i].Provider != sessionKeys[j].Provider {
+			return sessionKeys[i].Provider < sessionKeys[j].Provider
+		}
+		return sessionKeys[i].SID < sessionKeys[j].SID
+	})
 
-	for _, sid := range sessionIDs {
-		groupRecords := sessionGroups[sid]
+	for _, key := range sessionKeys {
+		groupRecords := sessionGroups[key]
 		sort.Slice(groupRecords, func(i, j int) bool {
 			return groupRecords[i].Timestamp.Before(groupRecords[j].Timestamp)
 		})
@@ -137,14 +166,14 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 		convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
 		convIndex++
 		cs := buildConversationSummary(convID, groupRecords)
-		cs.SessionID = sid
+		cs.SessionID = key.SID
 
 		// Attempt full conversation reconstruction.
 		detail := conversation.Reconstruct(groupRecords)
 		if detail != nil {
 			cs.Detail = detail
 			log.Printf("Reconstructed conversation %s: %d turns, session %s",
-				convID, len(detail.Turns), sid[:8])
+				convID, len(detail.Turns), shortID(key.SID))
 		}
 		conversations = append(conversations, cs)
 	}

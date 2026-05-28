@@ -7,10 +7,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 
+	"github.com/rxbynerd/dressage/internal/azurefetch"
 	"github.com/rxbynerd/dressage/internal/fetch"
 	"github.com/rxbynerd/dressage/internal/report"
 	"github.com/rxbynerd/dressage/internal/s3fetch"
@@ -33,6 +35,7 @@ func main() {
 	var common commonFlags
 	root := newRootCommand(&common)
 	root.AddCommand(newBedrockCommand(&common))
+	root.AddCommand(newAzureCommand(&common))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -110,6 +113,53 @@ func newBedrockCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&profile, "profile", "", "AWS named profile")
 
 	_ = cmd.MarkFlagRequired("bucket")
+
+	return cmd
+}
+
+// newAzureCommand builds the "azure" subcommand, which ingests Azure OpenAI
+// RequestResponse invocation logs from an Azure Monitor Log Analytics workspace
+// and renders them via the shared report pipeline.
+func newAzureCommand(common *commonFlags) *cobra.Command {
+	var (
+		workspace    string
+		subscription string
+		resource     string
+		tenant       string
+	)
+
+	cmd := &cobra.Command{
+		Use:          "azure",
+		Short:        "Analyze Azure OpenAI invocation logs from Log Analytics",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var credOpts *azidentity.DefaultAzureCredentialOptions
+			if tenant != "" {
+				credOpts = &azidentity.DefaultAzureCredentialOptions{TenantID: tenant}
+			}
+
+			cred, err := azidentity.NewDefaultAzureCredential(credOpts)
+			if err != nil {
+				return fmt.Errorf("creating Azure credential: %w", err)
+			}
+
+			log.Println("Querying Azure OpenAI invocation logs from Log Analytics...")
+			fetcher, err := azurefetch.New(cred, workspace, subscription, resource)
+			if err != nil {
+				return fmt.Errorf("creating Azure fetcher: %w", err)
+			}
+
+			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", common)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&workspace, "workspace", "", "Log Analytics workspace ID (GUID) (required)")
+	flags.StringVar(&subscription, "subscription", "", "Subscription ID narrowing filter")
+	flags.StringVar(&resource, "resource", "", "Azure OpenAI resource ID (or substring) narrowing filter")
+	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
+
+	_ = cmd.MarkFlagRequired("workspace")
 
 	return cmd
 }

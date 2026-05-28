@@ -58,9 +58,17 @@ func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if err := json.Unmarshal(inputBody, &req); err != nil {
 		return ""
 	}
+	return sessionSuffix(req.Metadata.UserID)
+}
+
+// sessionSuffix extracts the session UUID that follows the "_session_" marker
+// in an identity string of the form user_{hash}_account__session_{uuid} (as set
+// by Claude Code). It returns "" when the marker is absent. Shared by the
+// Anthropic and OpenAI session-extraction paths.
+func sessionSuffix(s string) string {
 	const prefix = "_session_"
-	if idx := strings.Index(req.Metadata.UserID, prefix); idx >= 0 {
-		return req.Metadata.UserID[idx+len(prefix):]
+	if idx := strings.Index(s, prefix); idx >= 0 {
+		return s[idx+len(prefix):]
 	}
 	return ""
 }
@@ -91,23 +99,25 @@ func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
 	// Parse all request bodies and find the one with the most messages
 	// (the latest main-thread invocation).
 	var all []parsedInvocation
-	var best *parsedInvocation
+	bestIdx := -1
 
 	for i := range sorted {
 		req := parseRequest(sorted[i].Input.JSON)
 		if req == nil {
 			continue
 		}
-		p := parsedInvocation{rec: &sorted[i], req: req}
-		all = append(all, p)
-		if best == nil || len(req.Messages) > len(best.req.Messages) {
-			best = &all[len(all)-1]
+		all = append(all, parsedInvocation{rec: &sorted[i], req: req})
+		if bestIdx < 0 || len(req.Messages) > len(all[bestIdx].req.Messages) {
+			bestIdx = len(all) - 1
 		}
 	}
 
-	if best == nil {
+	if bestIdx < 0 {
 		return nil
 	}
+	// Resolve the pointer AFTER the loop so it does not alias into a slice that
+	// may have been reallocated by append.
+	best := &all[bestIdx]
 
 	detail := &model.ConversationDetail{
 		SessionID:    extractSessionFromReq(best.req),
@@ -202,12 +212,7 @@ func parseRequest(body json.RawMessage) *messagesAPIRequest {
 }
 
 func extractSessionFromReq(req *messagesAPIRequest) string {
-	const prefix = "_session_"
-	uid := req.Metadata.UserID
-	if idx := strings.Index(uid, prefix); idx >= 0 {
-		return uid[idx+len(prefix):]
-	}
-	return ""
+	return sessionSuffix(req.Metadata.UserID)
 }
 
 // extractSystemPrompt handles both string and array formats for the system field.

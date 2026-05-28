@@ -351,7 +351,7 @@ func TestExtractSessionOpenAI(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractSessionID("azure", json.RawMessage(tc.input))
+			got := ExtractSessionID("azure", "gpt-4o", json.RawMessage(tc.input))
 			if got != tc.want {
 				t.Errorf("ExtractSessionID(azure) = %q, want %q", got, tc.want)
 			}

@@ -43,7 +43,7 @@ func TestExtractSessionID(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ExtractSessionID("bedrock", json.RawMessage(tc.input))
+			got := ExtractSessionID("bedrock", "anthropic.claude-3", json.RawMessage(tc.input))
 			if got != tc.want {
 				t.Errorf("ExtractSessionID() = %q, want %q", got, tc.want)
 			}

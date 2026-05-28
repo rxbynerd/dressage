@@ -1,6 +1,7 @@
 package azurefetch
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -233,10 +234,10 @@ func TestBuildQuery(t *testing.T) {
 	t.Run("optional filters when set", func(t *testing.T) {
 		f := &Fetcher{subscription: "sub-1", resource: "my-aoai"}
 		q := f.buildQuery(time.Time{}, time.Time{})
-		if !strings.Contains(q, `_ResourceId contains "my-aoai"`) {
+		if !strings.Contains(q, `_ResourceId contains 'my-aoai'`) {
 			t.Errorf("query missing resource filter:\n%s", q)
 		}
-		if !strings.Contains(q, `SubscriptionId == "sub-1"`) {
+		if !strings.Contains(q, `SubscriptionId == 'sub-1'`) {
 			t.Errorf("query missing subscription filter:\n%s", q)
 		}
 	})
@@ -253,4 +254,77 @@ func TestBuildQuery(t *testing.T) {
 			t.Errorf("query missing end bound:\n%s", q)
 		}
 	})
+}
+
+// A double-encoded field whose inner string is NOT valid JSON (e.g. a plain
+// error message) must not corrupt the record: the stored body must remain valid
+// JSON (the original quoted string), not the bare un-quoted bytes.
+func TestUnwrapJSONStringNonJSONInner(t *testing.T) {
+	t.Run("direct", func(t *testing.T) {
+		// raw is a JSON string whose contents ("oops not json") are not JSON.
+		raw := json.RawMessage(`"oops not json"`)
+		got := unwrapJSONString(raw)
+		if !json.Valid(got) {
+			t.Errorf("unwrapJSONString returned invalid JSON: %s", got)
+		}
+		if string(got) != string(raw) {
+			t.Errorf("got %s, want original raw %s", got, raw)
+		}
+	})
+
+	t.Run("through recordsFromTables", func(t *testing.T) {
+		// responseBody is a double-encoded string whose inner content is a plain
+		// (non-JSON) message; requestBody is double-encoded valid JSON.
+		props := `{` +
+			`"modelDeploymentName":"gpt-4o-deploy",` +
+			`"requestBody":"{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}",` +
+			`"responseBody":"upstream timed out"` +
+			`}`
+		tables := []azlogs.Table{{
+			Columns: stdColumns(),
+			Rows: []azlogs.Row{
+				{
+					"2025-03-01T09:00:00Z", "ChatCompletions_Create", float64(10),
+					"504", "ServerError", "corr-1", "/subscriptions/s/resourceGroups/r/x",
+					"10.0.0.1", "RequestResponse", "r", props,
+				},
+			},
+		}}
+		records, err := recordsFromTables(tables)
+		if err != nil {
+			t.Fatalf("recordsFromTables: %v", err)
+		}
+		if len(records) != 1 {
+			t.Fatalf("records = %d, want 1", len(records))
+		}
+		if !json.Valid(records[0].Output.JSON) {
+			t.Errorf("Output.JSON is not valid JSON: %s", records[0].Output.JSON)
+		}
+		if !json.Valid(records[0].Input.JSON) {
+			t.Errorf("Input.JSON is not valid JSON: %s", records[0].Input.JSON)
+		}
+	})
+}
+
+func TestKQLString(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain", "my-aoai", `'my-aoai'`},
+		{"single quote", "o'brien", `'o\'brien'`},
+		{"backslash", `domain\user`, `'domain\\user'`},
+		// Backslash must be escaped before the quote escaping so the escapes
+		// introduced for the quote are not themselves doubled.
+		{"backslash then quote", `a\'b`, `'a\\\'b'`},
+		{"empty", "", `''`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := kqlString(tc.in); got != tc.want {
+				t.Errorf("kqlString(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
 }

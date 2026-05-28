@@ -279,15 +279,20 @@ func firstString(props map[string]json.RawMessage, keys ...string) string {
 
 // unwrapJSONString handles the double-encoding seen in Azure diagnostic logs: a
 // field value may be a JSON object OR a JSON string whose contents are
-// themselves JSON. If raw decodes to a string, that string's bytes are treated
-// as the real JSON; otherwise raw is returned unchanged.
+// themselves JSON. If raw decodes to a string AND that string's bytes are
+// themselves valid JSON, those bytes are returned as the real JSON. If the
+// inner string is NOT valid JSON (e.g. a plain error message), raw is returned
+// unchanged — raw is the original quoted string, which is itself valid JSON and
+// renders safely, whereas the bare inner bytes would corrupt downstream parsing.
 func unwrapJSONString(raw json.RawMessage) json.RawMessage {
 	if len(raw) == 0 {
 		return nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return json.RawMessage(s)
+		if json.Valid([]byte(s)) {
+			return json.RawMessage(s)
+		}
 	}
 	return raw
 }

@@ -118,7 +118,12 @@ func (f *Fetcher) buildQuery(start, end time.Time) string {
 	return b.String()
 }
 
-// kqlString quotes and escapes a string literal for safe embedding in KQL.
+// kqlString quotes and escapes a string literal for safe embedding in KQL,
+// using KQL's single-quoted string idiom. Per KQL string-literal escaping a
+// backslash is written `\\` and a single quote `\'`; backslash must be escaped
+// first so the escapes introduced for quotes are not themselves doubled.
 func kqlString(s string) string {
-	return `"` + strings.ReplaceAll(s, `"`, `\"`) + `"`
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `\'`)
+	return "'" + s + "'"
 }

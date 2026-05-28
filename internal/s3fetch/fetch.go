@@ -216,6 +216,13 @@ func (f *Fetcher) fetchS3Path(ctx context.Context, s3Path string) (json.RawMessa
 		return nil, err
 	}
 
+	// Confine reads to the configured bucket. The s3:// URI is parsed from a log
+	// record, which is attacker-influenceable; a crafted path could otherwise
+	// redirect GetObject to any bucket the operator's role can read.
+	if bucket != f.bucket {
+		return nil, fmt.Errorf("refusing to fetch %s: bucket %q does not match configured bucket %q", s3Path, bucket, f.bucket)
+	}
+
 	output, err := f.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
@@ -271,7 +278,10 @@ func parseNDJSON(r io.Reader) ([]bedrockLog, error) {
 
 		var entry bedrockLog
 		if err := json.Unmarshal(line, &entry); err != nil {
-			return nil, fmt.Errorf("parsing JSON line: %w", err)
+			// A single malformed line should not discard every good record in
+			// the file. Log and continue, mirroring the Azure path's resilience.
+			log.Printf("Warning: skipping unparseable NDJSON line: %v", err)
+			continue
 		}
 		logs = append(logs, entry)
 	}

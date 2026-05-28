@@ -358,3 +358,39 @@ func TestExtractSessionOpenAI(t *testing.T) {
 		})
 	}
 }
+
+// An assistant message with content:null and no tool_calls carries no blocks
+// and must NOT produce a blank turn in the reconstruction.
+func TestReconstructOpenAISkipsEmptyAssistantTurn(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	input := `{
+		"messages": [
+			{"role": "user", "content": "Hello"},
+			{"role": "assistant", "content": null}
+		]
+	}`
+	output := `{"choices": [{"message": {"role": "assistant", "content": "Hi!"}, "finish_reason": "stop"}]}`
+
+	detail := Reconstruct([]model.Record{makeAzureRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+
+	// Expected turns: [0] user "Hello", [1] assistant "Hi!" from the response.
+	// The empty assistant history message must be skipped.
+	if len(detail.Turns) != 2 {
+		t.Fatalf("turns = %d, want 2 (empty assistant turn skipped)", len(detail.Turns))
+	}
+	for i, turn := range detail.Turns {
+		if len(turn.Blocks) == 0 {
+			t.Errorf("turn[%d] has zero blocks; empty turns must be skipped", i)
+		}
+	}
+	if detail.Turns[0].Role != "user" || detail.Turns[0].Blocks[0].Text != "Hello" {
+		t.Errorf("turn[0] = %+v, want user 'Hello'", detail.Turns[0])
+	}
+	if detail.Turns[1].Role != "assistant" || detail.Turns[1].Blocks[0].Text != "Hi!" {
+		t.Errorf("turn[1] = %+v, want assistant 'Hi!'", detail.Turns[1])
+	}
+}

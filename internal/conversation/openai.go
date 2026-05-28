@@ -85,22 +85,24 @@ func reconstructOpenAI(records []model.Record) *model.ConversationDetail {
 	})
 
 	var all []parsedOpenAIInvocation
-	var best *parsedOpenAIInvocation
+	bestIdx := -1
 	for i := range sorted {
 		req := parseOpenAIRequest(sorted[i].Input.JSON)
 		if req == nil {
 			continue
 		}
-		p := parsedOpenAIInvocation{rec: &sorted[i], req: req}
-		all = append(all, p)
-		if best == nil || len(req.Messages) > len(best.req.Messages) {
-			best = &all[len(all)-1]
+		all = append(all, parsedOpenAIInvocation{rec: &sorted[i], req: req})
+		if bestIdx < 0 || len(req.Messages) > len(all[bestIdx].req.Messages) {
+			bestIdx = len(all) - 1
 		}
 	}
 
-	if best == nil {
+	if bestIdx < 0 {
 		return nil
 	}
+	// Resolve the pointer AFTER the loop so it does not alias into a slice that
+	// may have been reallocated by append.
+	best := &all[bestIdx]
 
 	detail := &model.ConversationDetail{
 		SessionID:    extractSessionFromUser(best.req.User, best.req.Metadata.UserID),
@@ -108,17 +110,25 @@ func reconstructOpenAI(records []model.Record) *model.ConversationDetail {
 		Tools:        openaiTools(best.req.Tools),
 	}
 
-	// Expand non-system messages into turns (system/developer become SystemPrompt).
+	// Expand non-system messages into turns (system/developer become
+	// SystemPrompt). Skip turns that carry no blocks — e.g. an assistant message
+	// with content:null and no tool_calls — so they don't render as blank turns
+	// (matching the Anthropic path).
 	for _, msg := range best.req.Messages {
 		if isSystemRole(msg.Role) {
 			continue
 		}
-		detail.Turns = append(detail.Turns, openaiTurn(msg))
+		turn := openaiTurn(msg)
+		if len(turn.Blocks) == 0 {
+			continue
+		}
+		detail.Turns = append(detail.Turns, turn)
 	}
 
-	// Append the final assistant response from the output body.
+	// Append the final assistant response from the output body, unless it has no
+	// blocks (e.g. an empty/refused completion).
 	finalTurn := reassembleOpenAIOutput(best.rec.Output.JSON)
-	if finalTurn != nil {
+	if finalTurn != nil && len(finalTurn.Blocks) > 0 {
 		finalTurn.Metrics = openaiMetrics(best.rec, best.rec.Output.JSON)
 		detail.Turns = append(detail.Turns, *finalTurn)
 	}

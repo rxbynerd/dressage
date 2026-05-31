@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversations (including `tool_calls`, the legacy `function_call`, and
   streaming-summarized responses), and renders them through the shared report
   pipeline. See [docs/providers/azure.md](docs/providers/azure.md).
+- Azure OpenAI log ingestion from an Azure **Storage account** (the new
+  `dressage azure-storage` subcommand), for diagnostic settings that export the
+  `RequestResponse` category to a storage account instead of (or alongside) a
+  Log Analytics workspace. Lists the `insights-logs-requestresponse` container,
+  parses the hourly `PT1H.json` resource-log NDJSON blobs, and normalizes them
+  identically to the workspace path (same `Provider: "azure"`, shared
+  payload/identity decoding), so reports are sink-agnostic. Requires
+  **Storage Blob Data Reader** on the account. See
+  [docs/providers/azure.md](docs/providers/azure.md#storage-account-destination).
 - Provider abstraction so log sources other than AWS Bedrock can be added
   without forking the codebase. Every fetcher now emits a provider-neutral
   `model.Record` (with `Identity`/`Body`) and implements the new

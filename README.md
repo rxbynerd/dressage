@@ -9,7 +9,7 @@ Analyze hosted LLM model invocation logs to investigate opportunities for develo
 | AWS Bedrock | Supported | `dressage bedrock` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
 | Azure OpenAI (Log Analytics) | Supported | `dressage azure` | [docs/providers/azure.md](docs/providers/azure.md) |
 | Azure OpenAI (Storage account) | Supported | `dressage azure-storage` | [docs/providers/azure.md](docs/providers/azure.md#storage-account-destination) |
-| Vertex AI / Gemini | Planned ([#6](https://github.com/rxbynerd/dressage/issues/6)) | — | [docs/providers/vertex.md](docs/providers/vertex.md) |
+| Vertex AI / Gemini (BigQuery) | Supported | `dressage vertex` | [docs/providers/vertex.md](docs/providers/vertex.md) |
 
 ## Prerequisites
 
@@ -40,6 +40,7 @@ with no subcommand prints help.
 dressage bedrock --bucket my-bedrock-logs [flags]
 dressage azure --workspace <log-analytics-workspace-id> [flags]
 dressage azure-storage --account <storage-account-name> [flags]
+dressage vertex --project <gcp-project> --dataset <ds> --table <table> [flags]
 ```
 
 ### Flags
@@ -80,6 +81,21 @@ and adds these flags:
 | `--container` | No | `insights-logs-requestresponse` | Blob container holding the logs |
 | `--tenant` | No | | Microsoft Entra tenant ID for authentication |
 
+The `vertex` subcommand reads Vertex AI request-response logs from BigQuery and
+adds these flags:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--project` | Yes | | GCP project containing the BigQuery logging dataset |
+| `--dataset` | Yes | | BigQuery dataset holding the request-response logs |
+| `--table` | Yes | | BigQuery table holding the request-response logs |
+| `--location` | No | | BigQuery dataset location (e.g. `us-central1`; inferred if empty) |
+| `--credentials` | No | | Path to a service-account key JSON file (default: ADC) |
+
+Gemini invocations are reconstructed into full conversations; Claude-on-Vertex
+invocations contribute to summary stats but are not yet reconstructed (tracked
+in [#4](https://github.com/rxbynerd/dressage/issues/4)).
+
 ### Examples
 
 ```bash
@@ -101,12 +117,18 @@ dressage azure --workspace 11111111-2222-3333-4444-555555555555 \
 
 # Analyze Azure OpenAI logs exported to a storage account
 dressage azure-storage --account mydiaglogs --start 2025-03-01 --end 2025-03-15
+
+# Analyze Vertex AI / Gemini logs from a BigQuery dataset
+dressage vertex --project my-gcp-project --dataset vertex_logging \
+  --table request_response_logging --start 2025-03-01 --end 2025-03-15
 ```
 
 See [docs/providers/bedrock.md](docs/providers/bedrock.md) for how Bedrock
-invocation logging works, and [docs/providers/azure.md](docs/providers/azure.md)
+invocation logging works, [docs/providers/azure.md](docs/providers/azure.md)
 for how to enable Azure OpenAI diagnostic logging, the content-logging caveat,
-and required RBAC.
+and required RBAC, and [docs/providers/vertex.md](docs/providers/vertex.md) for
+enabling Vertex AI request-response logging, the required IAM, and the Gemini
+session-grouping and cache-write caveats.
 
 ## Report Structure
 

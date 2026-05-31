@@ -41,9 +41,11 @@ func (t Turn) HasToolUse() bool {
 // ContentBlock is a single content element within a turn.
 type ContentBlock struct {
 	// Type identifies the block kind. The known set ("text", "tool_use",
-	// "tool_result", "thinking") is NOT exhaustive: a "media" type is planned
-	// for image/file parts (see #6), and unrecognized provider block types are
-	// passed through verbatim — readers must not assume the set is closed.
+	// "tool_result", "thinking") is NOT exhaustive: a dedicated "media" type is
+	// still planned for image/file parts (the Gemini reconstructor currently
+	// surfaces inlineData/fileData as labeled "text" placeholders), and
+	// unrecognized provider block types are passed through verbatim — readers
+	// must not assume the set is closed.
 	Type          string
 	Text          string // text content (for "text" and "thinking" types)
 	ToolName      string // tool name (for "tool_use")

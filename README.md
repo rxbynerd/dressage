@@ -7,7 +7,8 @@ Analyze hosted LLM model invocation logs to investigate opportunities for develo
 | Provider | Status | Subcommand | Docs |
 |----------|--------|------------|------|
 | AWS Bedrock | Supported | `dressage bedrock` | [docs/providers/bedrock.md](docs/providers/bedrock.md) |
-| Azure OpenAI | Supported | `dressage azure` | [docs/providers/azure.md](docs/providers/azure.md) |
+| Azure OpenAI (Log Analytics) | Supported | `dressage azure` | [docs/providers/azure.md](docs/providers/azure.md) |
+| Azure OpenAI (Storage account) | Supported | `dressage azure-storage` | [docs/providers/azure.md](docs/providers/azure.md#storage-account-destination) |
 | Vertex AI / Gemini | Planned ([#6](https://github.com/rxbynerd/dressage/issues/6)) | — | [docs/providers/vertex.md](docs/providers/vertex.md) |
 
 ## Prerequisites
@@ -38,6 +39,7 @@ with no subcommand prints help.
 ```bash
 dressage bedrock --bucket my-bedrock-logs [flags]
 dressage azure --workspace <log-analytics-workspace-id> [flags]
+dressage azure-storage --account <storage-account-name> [flags]
 ```
 
 ### Flags
@@ -69,6 +71,15 @@ The `azure` subcommand adds Log Analytics-specific flags:
 | `--resource` | No | | Azure OpenAI resource ID (or substring) narrowing filter |
 | `--tenant` | No | | Microsoft Entra tenant ID for authentication |
 
+The `azure-storage` subcommand reads the same logs exported to a storage account
+and adds these flags:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--account` | Yes | | Storage account name holding the diagnostic logs |
+| `--container` | No | `insights-logs-requestresponse` | Blob container holding the logs |
+| `--tenant` | No | | Microsoft Entra tenant ID for authentication |
+
 ### Examples
 
 ```bash
@@ -87,6 +98,9 @@ dressage azure --workspace 11111111-2222-3333-4444-555555555555
 # Filter to a date range and narrow to one resource
 dressage azure --workspace 11111111-2222-3333-4444-555555555555 \
   --resource my-aoai --start 2025-03-01 --end 2025-03-15
+
+# Analyze Azure OpenAI logs exported to a storage account
+dressage azure-storage --account mydiaglogs --start 2025-03-01 --end 2025-03-15
 ```
 
 See [docs/providers/bedrock.md](docs/providers/bedrock.md) for how Bedrock

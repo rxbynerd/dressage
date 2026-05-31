@@ -36,6 +36,7 @@ func main() {
 	root := newRootCommand(&common)
 	root.AddCommand(newBedrockCommand(&common))
 	root.AddCommand(newAzureCommand(&common))
+	root.AddCommand(newAzureStorageCommand(&common))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -160,6 +161,53 @@ func newAzureCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
 
 	_ = cmd.MarkFlagRequired("workspace")
+
+	return cmd
+}
+
+// newAzureStorageCommand builds the "azure-storage" subcommand, which ingests
+// Azure OpenAI RequestResponse diagnostic logs that have been exported to an
+// Azure Storage account (rather than a Log Analytics workspace) and renders them
+// via the shared report pipeline. The logs normalize identically to the "azure"
+// subcommand; only the sink differs.
+func newAzureStorageCommand(common *commonFlags) *cobra.Command {
+	var (
+		account   string
+		container string
+		tenant    string
+	)
+
+	cmd := &cobra.Command{
+		Use:          "azure-storage",
+		Short:        "Analyze Azure OpenAI invocation logs from a Storage account",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var credOpts *azidentity.DefaultAzureCredentialOptions
+			if tenant != "" {
+				credOpts = &azidentity.DefaultAzureCredentialOptions{TenantID: tenant}
+			}
+
+			cred, err := azidentity.NewDefaultAzureCredential(credOpts)
+			if err != nil {
+				return fmt.Errorf("creating Azure credential: %w", err)
+			}
+
+			log.Println("Reading Azure OpenAI diagnostic logs from Storage account...")
+			fetcher, err := azurefetch.NewBlobFetcher(cred, account, container)
+			if err != nil {
+				return fmt.Errorf("creating Azure storage fetcher: %w", err)
+			}
+
+			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", common)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&account, "account", "", "Azure Storage account name holding the diagnostic logs (required)")
+	flags.StringVar(&container, "container", azurefetch.DefaultContainer, "Blob container holding the diagnostic logs")
+	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
+
+	_ = cmd.MarkFlagRequired("account")
 
 	return cmd
 }

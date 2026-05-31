@@ -1,12 +1,19 @@
 # Azure OpenAI
 
 Analyze [Azure OpenAI request/response logs](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/monitor-openai)
-that Azure Monitor delivers, via a diagnostic setting, to a Log Analytics
-workspace where Dressage queries them with KQL.
+that Azure Monitor delivers, via a diagnostic setting, to either a Log Analytics
+workspace or an Azure Storage account.
 
-Dressage ingests from **Log Analytics** (KQL gives server-side date filtering,
-which keeps memory bounded, and it is the destination Microsoft's own dashboards
-use). Storage Account and Event Hub destinations are out of scope.
+Dressage supports two destinations for the same `RequestResponse` logs:
+
+- **Log Analytics** (`dressage azure`) — KQL gives server-side date filtering,
+  which keeps memory bounded, and it is the destination Microsoft's own
+  dashboards use.
+- **Storage account** (`dressage azure-storage`) — Azure Monitor writes hourly
+  NDJSON blobs; common for long-term archival and for tenants avoiding Log
+  Analytics ingestion costs. See [Storage account destination](#storage-account-destination).
+
+Both normalize to the same report. Event Hub destinations are out of scope.
 
 ## Prerequisites
 
@@ -168,6 +175,70 @@ Persistent (root) flags, shared with every provider:
 | `--subscription` | No | | Subscription ID narrowing filter |
 | `--resource` | No | | Azure OpenAI resource ID (or substring) narrowing filter |
 | `--tenant` | No | | Microsoft Entra tenant ID for authentication |
+
+## Storage account destination
+
+Instead of (or in addition to) a workspace, the diagnostic setting can ship the
+`RequestResponse` category to a **storage account**, which `dressage
+azure-storage` reads directly. The records carry the same payloads as the Log
+Analytics path, so the [content-logging caveat](#content-logging-caveat) and
+[payload-field handling](#how-dressage-finds-payloads) above apply identically.
+
+### Enabling
+
+```bash
+az monitor diagnostic-settings create \
+  --name aoai-to-storage \
+  --resource <Azure OpenAI resource ID> \
+  --storage-account <storage account resource ID> \
+  --logs '[{"category":"RequestResponse","enabled":true}]'
+```
+
+Azure Monitor writes one append blob per hour into the container
+`insights-logs-requestresponse` (the convention is `insights-logs-<category>`,
+category lower-cased), using the path layout:
+
+```
+insights-logs-requestresponse/resourceId=/SUBSCRIPTIONS/<sub>/RESOURCEGROUPS/<rg>/
+  PROVIDERS/MICROSOFT.COGNITIVESERVICES/ACCOUNTS/<acct>/
+  y=<YYYY>/m=<MM>/d=<DD>/h=<HH>/m=00/PT1H.json
+```
+
+Each `PT1H.json` blob is newline-delimited JSON, one Azure Monitor
+[resource-log record](https://learn.microsoft.com/en-us/azure/azure-monitor/essentials/resource-logs-schema)
+per line. Dressage prefilters blobs by the `y=/m=/d=/h=` hour in the path, then
+trims to the exact `--start`/`--end` window using each record's own timestamp.
+
+### Usage
+
+```bash
+# Read all RequestResponse blobs from a storage account
+dressage azure-storage --account mydiaglogs
+
+# Filter to a date range, writing to a named file
+dressage azure-storage --account mydiaglogs \
+  --start 2025-03-01 --end 2025-03-15 --output march-report.html
+```
+
+`azure-storage`-specific flags:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--account` | Yes | | Storage account name holding the diagnostic logs |
+| `--container` | No | `insights-logs-requestresponse` | Blob container holding the logs |
+| `--tenant` | No | | Microsoft Entra tenant ID for authentication |
+
+### Required RBAC
+
+The credential needs at least **Storage Blob Data Reader** on the storage
+account (or an enclosing scope):
+
+```bash
+az role assignment create \
+  --assignee <principal object ID or sign-in name> \
+  --role "Storage Blob Data Reader" \
+  --scope <storage account resource ID>
+```
 
 ## Conversation grouping
 

@@ -1,0 +1,254 @@
+package conversation
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"github.com/rxbynerd/dressage/internal/model"
+)
+
+// makeVertexRecord builds a vertex-provider Gemini record from request/response JSON.
+func makeVertexRecord(ts time.Time, reqID, input, output string) model.Record {
+	return model.Record{
+		Provider:  "vertex",
+		Timestamp: ts,
+		RequestID: reqID,
+		ModelID:   "gemini-2.0-flash",
+		Operation: "generateContent",
+		Input:     model.Body{JSON: json.RawMessage(input)},
+		Output:    model.Body{JSON: json.RawMessage(output)},
+	}
+}
+
+func TestReconstructGeminiPlainText(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	input := `{
+		"systemInstruction": {"parts": [{"text": "You are concise."}]},
+		"contents": [
+			{"role": "user", "parts": [{"text": "What is 2+2?"}]}
+		]
+	}`
+	output := `{
+		"candidates": [
+			{"content": {"role": "model", "parts": [{"text": "4"}]}, "finishReason": "STOP"}
+		],
+		"usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 1, "cachedContentTokenCount": 4}
+	}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	if detail.SystemPrompt != "You are concise." {
+		t.Errorf("SystemPrompt = %q", detail.SystemPrompt)
+	}
+	if len(detail.Turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(detail.Turns))
+	}
+	if detail.Turns[0].Role != "user" || detail.Turns[0].Blocks[0].Text != "What is 2+2?" {
+		t.Errorf("turn[0] = %+v, want user 'What is 2+2?'", detail.Turns[0])
+	}
+	if detail.Turns[1].Role != "assistant" || detail.Turns[1].Blocks[0].Text != "4" {
+		t.Errorf("turn[1] = %+v, want assistant '4'", detail.Turns[1])
+	}
+	m := detail.Turns[1].Metrics
+	if m == nil {
+		t.Fatal("assistant turn missing metrics")
+	}
+	if m.InputTokens != 12 || m.OutputTokens != 1 || m.CacheReadTokens != 4 {
+		t.Errorf("metrics tokens = %d/%d/%d, want 12/1/4", m.InputTokens, m.OutputTokens, m.CacheReadTokens)
+	}
+	if m.CacheWriteTokens != 0 {
+		t.Errorf("CacheWriteTokens = %d, want 0", m.CacheWriteTokens)
+	}
+	if m.StopReason != "STOP" {
+		t.Errorf("StopReason = %q, want STOP", m.StopReason)
+	}
+}
+
+func TestReconstructGeminiFunctionCall(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	// Single-turn function call: the user asks, the model responds with a
+	// functionCall in the output body.
+	input := `{
+		"contents": [
+			{"role": "user", "parts": [{"text": "Weather in Paris?"}]}
+		],
+		"tools": [{"functionDeclarations": [{"name": "get_weather", "description": "Get the weather"}]}]
+	}`
+	output := `{
+		"candidates": [
+			{"content": {"role": "model", "parts": [
+				{"functionCall": {"name": "get_weather", "args": {"city": "Paris"}}}
+			]}, "finishReason": "STOP"}
+		],
+		"usageMetadata": {"promptTokenCount": 20, "candidatesTokenCount": 5}
+	}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	if len(detail.Tools) != 1 || detail.Tools[0].Name != "get_weather" {
+		t.Errorf("Tools = %+v, want [get_weather]", detail.Tools)
+	}
+	// Turns: [0] user, [1] assistant functionCall (from output).
+	if len(detail.Turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(detail.Turns))
+	}
+	tu := detail.Turns[1].Blocks[0]
+	if tu.Type != "tool_use" || tu.ToolName != "get_weather" {
+		t.Errorf("block = %+v, want tool_use get_weather", tu)
+	}
+	if tu.ToolInput == "" || tu.ToolInput == "{}" {
+		t.Errorf("ToolInput = %q, want pretty-printed args", tu.ToolInput)
+	}
+}
+
+func TestReconstructGeminiMultiTurnToolLoop(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	// Final invocation carries the full history: user → model functionCall →
+	// user functionResponse → model final answer (from the output body).
+	input := `{
+		"contents": [
+			{"role": "user", "parts": [{"text": "Weather in Paris?"}]},
+			{"role": "model", "parts": [{"functionCall": {"name": "get_weather", "args": {"city": "Paris"}}}]},
+			{"role": "user", "parts": [{"functionResponse": {"name": "get_weather", "response": {"tempC": 18, "sky": "sunny"}}}]}
+		],
+		"tools": [{"functionDeclarations": [{"name": "get_weather", "description": "Get the weather"}]}]
+	}`
+	output := `{
+		"candidates": [
+			{"content": {"role": "model", "parts": [{"text": "It is 18C and sunny in Paris."}]}, "finishReason": "STOP"}
+		],
+		"usageMetadata": {"promptTokenCount": 40, "candidatesTokenCount": 9}
+	}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	// Turns: [0] user text, [1] assistant tool_use, [2] user tool_result, [3] assistant final.
+	if len(detail.Turns) != 4 {
+		t.Fatalf("turns = %d, want 4: %+v", len(detail.Turns), detail.Turns)
+	}
+	if detail.Turns[1].Role != "assistant" || detail.Turns[1].Blocks[0].Type != "tool_use" {
+		t.Errorf("turn[1] = %+v, want assistant tool_use", detail.Turns[1])
+	}
+	tr := detail.Turns[2]
+	if tr.Role != "user" || tr.Blocks[0].Type != "tool_result" {
+		t.Errorf("turn[2] = %+v, want user tool_result", tr)
+	}
+	if tr.Blocks[0].ToolID != "get_weather" {
+		t.Errorf("tool_result ToolID = %q, want get_weather (function name)", tr.Blocks[0].ToolID)
+	}
+	if detail.Turns[3].Role != "assistant" || detail.Turns[3].Blocks[0].Text != "It is 18C and sunny in Paris." {
+		t.Errorf("turn[3] = %+v, want assistant final answer", detail.Turns[3])
+	}
+}
+
+func TestReconstructGeminiThinking(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	input := `{
+		"contents": [
+			{"role": "user", "parts": [{"text": "Solve it."}]}
+		]
+	}`
+	// A thinking part is a text part flagged thought:true, followed by the answer.
+	output := `{
+		"candidates": [
+			{"content": {"role": "model", "parts": [
+				{"text": "Let me reason about this carefully.", "thought": true},
+				{"text": "The answer is 42."}
+			]}, "finishReason": "STOP"}
+		],
+		"usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 20}
+	}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	final := detail.Turns[len(detail.Turns)-1]
+	if len(final.Blocks) != 2 {
+		t.Fatalf("final blocks = %d, want 2 (thinking + text)", len(final.Blocks))
+	}
+	if final.Blocks[0].Type != "thinking" || final.Blocks[0].Text != "Let me reason about this carefully." {
+		t.Errorf("block[0] = %+v, want thinking", final.Blocks[0])
+	}
+	if final.Blocks[1].Type != "text" || final.Blocks[1].Text != "The answer is 42." {
+		t.Errorf("block[1] = %+v, want text answer", final.Blocks[1])
+	}
+}
+
+func TestReconstructGeminiStreamingAggregation(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	input := `{"contents": [{"role": "user", "parts": [{"text": "Hi"}]}]}`
+	// vertexfetch wraps streamed chunks into a JSON array; the reconstructor must
+	// concatenate the streamed text and read usage/finishReason from the last chunk.
+	output := `[
+		{"candidates": [{"content": {"role": "model", "parts": [{"text": "Hel"}]}}]},
+		{"candidates": [{"content": {"role": "model", "parts": [{"text": "lo "}]}}]},
+		{"candidates": [{"content": {"role": "model", "parts": [{"text": "there!"}]}, "finishReason": "STOP"}], "usageMetadata": {"promptTokenCount": 3, "candidatesTokenCount": 4}}
+	]`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	final := detail.Turns[len(detail.Turns)-1]
+	if len(final.Blocks) != 1 || final.Blocks[0].Text != "Hello there!" {
+		t.Errorf("streamed text = %+v, want one block 'Hello there!'", final.Blocks)
+	}
+	if final.Metrics == nil || final.Metrics.OutputTokens != 4 || final.Metrics.StopReason != "STOP" {
+		t.Errorf("metrics = %+v, want OutputTokens=4 StopReason=STOP", final.Metrics)
+	}
+}
+
+func TestReconstructGeminiInlineDataPlaceholder(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	input := `{
+		"contents": [
+			{"role": "user", "parts": [
+				{"inlineData": {"mimeType": "image/png", "data": "iVBORw0KGgo="}},
+				{"text": "What is in this image?"}
+			]}
+		]
+	}`
+	output := `{"candidates": [{"content": {"role": "model", "parts": [{"text": "A cat."}]}}]}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	blocks := detail.Turns[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("user blocks = %d, want 2 (inline placeholder + text)", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "[inline data: image/png]" {
+		t.Errorf("block[0] = %+v, want inline-data placeholder", blocks[0])
+	}
+}
+
+func TestExtractSessionGemini(t *testing.T) {
+	withMarker := `{
+		"systemInstruction": {"parts": [{"text": "user_abc_account__session_11112222-3333-4444-5555-666677778888"}]},
+		"contents": [{"role": "user", "parts": [{"text": "hi"}]}]
+	}`
+	got := ExtractSessionID("vertex", "gemini-2.0-flash", json.RawMessage(withMarker))
+	if got != "11112222-3333-4444-5555-666677778888" {
+		t.Errorf("session = %q, want the uuid after _session_", got)
+	}
+
+	noMarker := `{"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}`
+	if got := ExtractSessionID("vertex", "gemini-2.0-flash", json.RawMessage(noMarker)); got != "" {
+		t.Errorf("session = %q, want empty when no marker present", got)
+	}
+}

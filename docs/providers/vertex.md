@@ -166,20 +166,27 @@ how many rows were affected, rather than one line per row.
 
 ## Conversation grouping
 
-Gemini has **no first-class equivalent** to Anthropic's `metadata.user_id`, so
-there is no built-in per-request session id to group on. Dressage handles this
-in two ways:
+As with the other providers, Dressage produces the rich turn-by-turn
+**conversation reconstruction** (the drill-down `Detail`) only for
+**session-grouped** conversations. Gemini has **no first-class equivalent** to
+Anthropic's `metadata.user_id`, so there is no built-in per-request session id
+to group on. Dressage handles this in two ways:
 
-1. **Opt-in session marker.** If a wrapping harness embeds a `_session_<uuid>`
-   marker in the request's `systemInstruction` text, Dressage extracts it and
-   groups by session id (the same marker convention Claude Code uses elsewhere).
-2. **Time-gap fallback.** Otherwise Dressage groups by
-   `(provider, model, identity)` with a 5-minute gap between consecutive
-   invocations — the same heuristic used for Bedrock and Azure, which works well
-   for coding-harness usage. Because the request-response logging schema has no
-   per-row caller identity (see below), the identity component is empty, so a
-   day's Gemini invocations for one model are split into conversations purely by
-   the time gap.
+1. **Opt-in session marker (enables the drill-down).** If a wrapping harness
+   embeds a `_session_<uuid>` marker in the request's `systemInstruction` text,
+   Dressage extracts it, groups by session id (the same marker convention Claude
+   Code uses elsewhere), and reconstructs the full turn-by-turn conversation for
+   that session.
+2. **Time-gap fallback (summary only).** Without a session marker, Dressage
+   groups by `(provider, model, identity)` with a 5-minute gap between
+   consecutive invocations — the same heuristic used for Bedrock and Azure.
+   Because the request-response logging schema has no per-row caller identity
+   (see below), the identity component is empty, so a day's Gemini invocations
+   for one model are split into conversations purely by the time gap. These
+   conversations appear in the report with their per-invocation request/response
+   bodies, but **without** the reconstructed turn-by-turn `Detail` (consistent
+   with the Bedrock and Azure behaviour). Embed the session marker if you want
+   the drill-down.
 
 ## Identity attribution
 

@@ -2,6 +2,7 @@ package vertexfetch
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,114 @@ func TestRecordFromRowStreamingResponse(t *testing.T) {
 	}
 }
 
+func TestCombineRequestPayloadMultiElement(t *testing.T) {
+	cases := []struct {
+		name    string
+		payload []string
+		want    string
+	}{
+		{
+			name:    "split payload reassembles by concatenation",
+			payload: []string{`{"contents":[{"role":"user",`, `"parts":[{"text":"hi"}]}]}`},
+			want:    `{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`,
+		},
+		{
+			name:    "concatenation invalid, first valid element used",
+			payload: []string{`{"contents":[]}`, `garbage`},
+			want:    `{"contents":[]}`,
+		},
+		{
+			name:    "concatenation invalid, second valid element used",
+			payload: []string{`garbage`, `{"contents":[{"role":"user","parts":[]}]}`},
+			want:    `{"contents":[{"role":"user","parts":[]}]}`,
+		},
+		{
+			name:    "all invalid falls back to first element",
+			payload: []string{`{oops`, `also bad`},
+			want:    `{oops`,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := string(combineRequestPayload(c.payload))
+			if got != c.want {
+				t.Errorf("combineRequestPayload(%v) = %q, want %q", c.payload, got, c.want)
+			}
+		})
+	}
+}
+
+func TestParseUsageMetadataStreamedNoUsage(t *testing.T) {
+	// A streamed array where no chunk carries usageMetadata returns nil.
+	body := []byte(`[{"candidates":[{"content":{"parts":[{"text":"a"}]}}]},{"candidates":[{"content":{"parts":[{"text":"b"}]}}]}]`)
+	if u := parseUsageMetadata(body); u != nil {
+		t.Errorf("parseUsageMetadata = %+v, want nil when no chunk has usage", u)
+	}
+}
+
+func TestParseUsageMetadataPicksLastChunkWithUsage(t *testing.T) {
+	// Two chunks carry usage; the LAST one wins (Gemini reports cumulative usage
+	// in the final chunk).
+	body := []byte(`[
+		{"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":1}},
+		{"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":9}}
+	]`)
+	u := parseUsageMetadata(body)
+	if u == nil || u.CandidatesTokenCount != 9 {
+		t.Errorf("parseUsageMetadata = %+v, want CandidatesTokenCount=9 (last chunk)", u)
+	}
+}
+
+func TestSynthesizeRequestIDEmptyModel(t *testing.T) {
+	// No models/ segment and no deployed_model_id => empty model => "vertex-" prefix.
+	row := vertexRow{
+		Endpoint:       "projects/p/locations/us-central1/endpoints/555",
+		LoggingTime:    time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
+		RequestPayload: []string{`{"contents":[{"role":"user","parts":[{"text":"x"}]}]}`},
+	}
+	rec, _ := recordFromRow(row)
+	if !strings.HasPrefix(rec.RequestID, "vertex-") {
+		t.Errorf("synthesized RequestID = %q, want vertex- prefix when model is empty", rec.RequestID)
+	}
+}
+
+func TestIdentityExtraPartialPath(t *testing.T) {
+	// An endpoint with projects/ but no locations/ should populate project only.
+	row := vertexRow{
+		Endpoint:       "projects/my-proj/models/gemini-2.0-flash",
+		LoggingTime:    time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
+		RequestID:      "1",
+		RequestPayload: []string{`{"contents":[{"role":"user","parts":[{"text":"x"}]}]}`},
+	}
+	rec, _ := recordFromRow(row)
+	if rec.Identity.Extra["project"] != "my-proj" {
+		t.Errorf("project = %q, want my-proj", rec.Identity.Extra["project"])
+	}
+	if _, ok := rec.Identity.Extra["location"]; ok {
+		t.Errorf("location should be absent when the endpoint has no locations/ segment, got %q", rec.Identity.Extra["location"])
+	}
+}
+
+func TestDeriveErrorCodeVariants(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"streamed array error", `[{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}]`, "RESOURCE_EXHAUSTED"},
+		{"numeric code only", `{"error":{"code":503}}`, "HTTP 503"},
+		{"empty array", `[]`, ""},
+		{"no error", `{"candidates":[{"content":{"parts":[{"text":"ok"}]}}]}`, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := deriveErrorCode([]byte(c.body)); got != c.want {
+				t.Errorf("deriveErrorCode(%s) = %q, want %q", c.body, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRecordFromRowErrorEnvelope(t *testing.T) {
 	row := vertexRow{
 		Endpoint:        testEndpoint,
@@ -216,9 +325,10 @@ func TestRecordsFromRowsCountsMissingUsage(t *testing.T) {
 }
 
 // fakeRunner is an injectable queryRunner that records the SQL/params it was
-// called with and returns canned rows.
+// called with and returns canned rows (or an injected error).
 type fakeRunner struct {
 	rows     []vertexRow
+	err      error
 	gotSQL   string
 	gotParam map[string]any
 }
@@ -226,6 +336,9 @@ type fakeRunner struct {
 func (f *fakeRunner) run(_ context.Context, sql string, params map[string]any) ([]vertexRow, error) {
 	f.gotSQL = sql
 	f.gotParam = params
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.rows, nil
 }
 
@@ -262,5 +375,32 @@ func TestFetchRejectsBadIdentifiers(t *testing.T) {
 	f := &Fetcher{runner: &fakeRunner{}, project: "p", dataset: "d", table: "bad`name"}
 	if _, err := f.Fetch(context.Background(), time.Time{}, time.Time{}); err == nil {
 		t.Error("Fetch with malicious table = nil error, want rejection before query runs")
+	}
+}
+
+func TestFetchPropagatesRunnerError(t *testing.T) {
+	f := &Fetcher{runner: &fakeRunner{err: errors.New("boom")}, project: "p", dataset: "d", table: "t"}
+	if _, err := f.Fetch(context.Background(), time.Time{}, time.Time{}); err == nil {
+		t.Error("Fetch = nil error, want the runner error propagated")
+	}
+}
+
+func TestFetchHandlesMissingUsage(t *testing.T) {
+	// A row with a response but no usageMetadata still yields a record (and
+	// triggers the once-per-run warning, which we cannot assert here but exercise).
+	fr := &fakeRunner{rows: []vertexRow{{
+		Endpoint:        testEndpoint,
+		LoggingTime:     time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
+		RequestID:       "1",
+		RequestPayload:  []string{`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`},
+		ResponsePayload: []string{`{"candidates":[{"content":{"parts":[{"text":"hello"}]}}]}`},
+	}}}
+	f := &Fetcher{runner: fr, project: "p", dataset: "d", table: "t"}
+	recs, err := f.Fetch(context.Background(), time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("Fetch error: %v", err)
+	}
+	if len(recs) != 1 || recs[0].Output.TokenCount != 0 {
+		t.Errorf("records = %+v, want 1 record with zero output tokens", recs)
 	}
 }

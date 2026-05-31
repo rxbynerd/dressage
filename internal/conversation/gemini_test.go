@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -237,6 +238,136 @@ func TestReconstructGeminiInlineDataPlaceholder(t *testing.T) {
 	}
 }
 
+func TestReconstructGeminiFileData(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+	input := `{
+		"contents": [
+			{"role": "user", "parts": [
+				{"fileData": {"mimeType": "application/pdf", "fileUri": "gs://bucket/doc.pdf"}},
+				{"text": "Summarize this."}
+			]}
+		]
+	}`
+	output := `{"candidates": [{"content": {"role": "model", "parts": [{"text": "ok"}]}}]}`
+
+	detail := Reconstruct([]model.Record{makeVertexRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	blocks := detail.Turns[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("user blocks = %d, want 2 (file placeholder + text)", len(blocks))
+	}
+	if blocks[0].Text != "[file: gs://bucket/doc.pdf (application/pdf)]" {
+		t.Errorf("file placeholder = %q", blocks[0].Text)
+	}
+	// The caption text must NOT be coalesced onto the placeholder.
+	if blocks[1].Text != "Summarize this." {
+		t.Errorf("caption block = %q, want 'Summarize this.'", blocks[1].Text)
+	}
+}
+
+func TestFileDataPlaceholderVariants(t *testing.T) {
+	cases := []struct {
+		in   geminiFileData
+		want string
+	}{
+		{geminiFileData{MimeType: "image/png", FileURI: "gs://b/x.png"}, "[file: gs://b/x.png (image/png)]"},
+		{geminiFileData{FileURI: "gs://b/x.png"}, "[file: gs://b/x.png]"},
+		{geminiFileData{MimeType: "image/png"}, "[file: image/png]"},
+		{geminiFileData{}, "[file]"},
+	}
+	for _, c := range cases {
+		if got := fileDataPlaceholder(&c.in); got != c.want {
+			t.Errorf("fileDataPlaceholder(%+v) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestInlineDataPlaceholderNoMime(t *testing.T) {
+	if got := inlineDataPlaceholder(&geminiInlineData{}); got != "[inline data]" {
+		t.Errorf("inlineDataPlaceholder(empty) = %q, want [inline data]", got)
+	}
+}
+
+func TestParseGeminiRequestGuards(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"nil body", ``},
+		{"malformed json", `{not json`},
+		{"valid json no contents", `{"systemInstruction":{"parts":[{"text":"x"}]}}`},
+		{"empty contents", `{"contents":[]}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if req := parseGeminiRequest([]byte(c.body)); req != nil {
+				t.Errorf("parseGeminiRequest(%q) = %+v, want nil", c.body, req)
+			}
+		})
+	}
+}
+
+func TestReconstructGeminiAllRecordsEmptyReturnsNil(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+	// Every record has an unparseable/contents-less request, so there is no
+	// "best" invocation to reconstruct from.
+	rec := makeVertexRecord(base, "req-1", `{"systemInstruction":{"parts":[{"text":"x"}]}}`, `{}`)
+	if got := reconstructGemini([]model.Record{rec}); got != nil {
+		t.Errorf("reconstructGemini = %+v, want nil when no record has contents", got)
+	}
+}
+
+func TestGeminiToolsTruncatesLongDescription(t *testing.T) {
+	long := strings.Repeat("x", 250)
+	tools := geminiTools([]geminiTool{{FunctionDeclarations: []geminiFunctionDecl{{Name: "t", Description: long}}}})
+	if len(tools) != 1 {
+		t.Fatalf("tools = %d, want 1", len(tools))
+	}
+	if len(tools[0].Description) != 203 || tools[0].Description[200:] != "..." {
+		t.Errorf("description len = %d, want 203 ending in '...'", len(tools[0].Description))
+	}
+}
+
+func TestReconstructGeminiMetricsNotOverwritten(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	// Two invocations form one conversation: the first turn-pair, then a
+	// follow-up that carries the full history. The earlier assistant turn's
+	// metrics must come from the invocation that produced it (req-1), not be
+	// overwritten by the later invocation.
+	in1 := `{"contents":[{"role":"user","parts":[{"text":"Q1"}]}]}`
+	out1 := `{"candidates":[{"content":{"role":"model","parts":[{"text":"A1"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2}}`
+
+	in2 := `{"contents":[
+		{"role":"user","parts":[{"text":"Q1"}]},
+		{"role":"model","parts":[{"text":"A1"}]},
+		{"role":"user","parts":[{"text":"Q2"}]}
+	]}`
+	out2 := `{"candidates":[{"content":{"role":"model","parts":[{"text":"A2"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":30,"candidatesTokenCount":4}}`
+
+	detail := Reconstruct([]model.Record{
+		makeVertexRecord(base, "req-1", in1, out1),
+		makeVertexRecord(base.Add(time.Minute), "req-2", in2, out2),
+	})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	// Turns: [0] user Q1, [1] assistant A1 (req-1 metrics), [2] user Q2, [3] assistant A2 (req-2 metrics).
+	if len(detail.Turns) != 4 {
+		t.Fatalf("turns = %d, want 4: %+v", len(detail.Turns), detail.Turns)
+	}
+	m1 := detail.Turns[1].Metrics
+	if m1 == nil || m1.RequestID != "req-1" || m1.OutputTokens != 2 {
+		t.Errorf("turn[1] metrics = %+v, want req-1 with OutputTokens=2", m1)
+	}
+	m2 := detail.Turns[3].Metrics
+	if m2 == nil || m2.RequestID != "req-2" || m2.OutputTokens != 4 {
+		t.Errorf("turn[3] metrics = %+v, want req-2 with OutputTokens=4", m2)
+	}
+}
+
 func TestExtractSessionGemini(t *testing.T) {
 	withMarker := `{
 		"systemInstruction": {"parts": [{"text": "user_abc_account__session_11112222-3333-4444-5555-666677778888"}]},
@@ -250,5 +381,10 @@ func TestExtractSessionGemini(t *testing.T) {
 	noMarker := `{"contents": [{"role": "user", "parts": [{"text": "hi"}]}]}`
 	if got := ExtractSessionID("vertex", "gemini-2.0-flash", json.RawMessage(noMarker)); got != "" {
 		t.Errorf("session = %q, want empty when no marker present", got)
+	}
+
+	// Malformed JSON must yield "" without panicking.
+	if got := ExtractSessionID("vertex", "gemini-2.0-flash", json.RawMessage(`{not json`)); got != "" {
+		t.Errorf("session = %q, want empty for malformed JSON", got)
 	}
 }

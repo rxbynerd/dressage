@@ -138,14 +138,14 @@ func reconstructGemini(records []model.Record) *model.ConversationDetail {
 		Tools:        geminiTools(best.req.Tools),
 	}
 
-	// Expand each content into a turn (model → assistant). Skip turns with no
-	// blocks so they don't render blank (matching the other reconstructors).
+	// Expand each content into a turn (model → assistant), preserving a strict
+	// 1:1 content↔turn mapping. attachGeminiMetrics relies on that invariant:
+	// it places an invocation's assistant turn at index = number of contents in
+	// its request, which only holds if no content is dropped here. (Contents
+	// always carry parts in practice; a block-less turn is rare and renders
+	// harmlessly empty rather than silently shifting later turn indices.)
 	for _, c := range best.req.Contents {
-		turn := geminiTurn(c)
-		if len(turn.Blocks) == 0 {
-			continue
-		}
-		detail.Turns = append(detail.Turns, turn)
+		detail.Turns = append(detail.Turns, geminiTurn(c))
 	}
 
 	// Append the final model response from the output body.
@@ -161,10 +161,9 @@ func reconstructGemini(records []model.Record) *model.ConversationDetail {
 }
 
 // attachGeminiMetrics correlates earlier invocations with the assistant turns
-// they produced. Because every content maps 1:1 to a (non-skipped) turn in order,
-// the assistant turn produced by an invocation sits at index = number of contents
-// in its request. Skipped (block-less) contents are rare in practice; when one
-// occurs the index lookup simply misses and the turn keeps the metrics it has.
+// they produced. Because reconstructGemini maps every content 1:1 to a turn in
+// order, the assistant turn produced by an invocation sits at index = number of
+// contents in its request.
 func attachGeminiMetrics(detail *model.ConversationDetail, invocations []parsedGeminiInvocation) {
 	for _, p := range invocations {
 		turnIdx := len(p.req.Contents)

@@ -15,9 +15,12 @@ import (
 	"google.golang.org/api/option"
 )
 
-// bigqueryScope is the OAuth scope BigQuery reads require; it is requested when
-// building credentials from an explicit service-account key file.
-const bigqueryScope = "https://www.googleapis.com/auth/bigquery"
+// bigqueryScope is the OAuth scope requested when building credentials from an
+// explicit service-account key file. Dressage only ever runs SELECT queries, so
+// it requests the read-only scope to keep the blast radius of a leaked key
+// confined to reads (no table/dataset mutation). The ADC path leaves scope
+// selection to the token source / SDK defaults.
+const bigqueryScope = "https://www.googleapis.com/auth/bigquery.readonly"
 
 // queryRunner abstracts running a parameterized BigQuery query and decoding the
 // result rows. The production implementation (bigqueryRunner) uses a
@@ -60,6 +63,14 @@ func New(client *bigquery.Client, project, dataset, table, location string) *Fet
 // CREDENTIALS, gcloud user credentials, and the attached workload identity when
 // running inside GCP.
 func NewClient(ctx context.Context, project, credentialsFile string) (*bigquery.Client, error) {
+	// Validate the project up front (it is the billing project passed to the
+	// SDK) so a malformed value fails with a clear Dressage error rather than an
+	// opaque Google API response. buildQuery validates it again before it reaches
+	// SQL; this is the defence-in-depth front door.
+	if err := validateIdentifier("project", project); err != nil {
+		return nil, err
+	}
+
 	var opts []option.ClientOption
 	if credentialsFile != "" {
 		// Build credentials from the key file via the cloud.google.com/go/auth

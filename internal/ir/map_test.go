@@ -119,6 +119,25 @@ func TestMapToolsKeepsFullSchemaUntruncated(t *testing.T) {
 	}
 }
 
+func TestMapToolsEmptyIsNonNilArray(t *testing.T) {
+	// An empty tool list must serialize as [] (not null) so consumers can treat
+	// conversation.tools as a plain array. conversation itself stays the sole
+	// null-capable field.
+	for _, in := range [][]model.ToolDef{nil, {}} {
+		tools := mapTools(in)
+		if tools == nil {
+			t.Fatalf("mapTools(%v) = nil, want non-nil empty slice", in)
+		}
+		b, err := json.Marshal(tools)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		if string(b) != "[]" {
+			t.Errorf("mapTools(%v) marshaled to %s, want []", in, b)
+		}
+	}
+}
+
 func TestMapBlockMedia(t *testing.T) {
 	inline := mapBlock(model.ContentBlock{
 		Type:        "media",

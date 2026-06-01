@@ -153,18 +153,17 @@ func mapDetail(d *model.ConversationDetail) *ConversationView {
 }
 
 // mapTools translates tool definitions, carrying full descriptions and the
-// inline input schema.
+// inline input schema. It always returns a non-nil slice so an empty tool list
+// serializes as [] rather than null, keeping ConversationView.Tools a plain
+// array for consumers (matching Turns/Blocks/Invocations).
 func mapTools(tools []model.ToolDef) []ToolIR {
-	if len(tools) == 0 {
-		return nil
-	}
-	out := make([]ToolIR, len(tools))
-	for i, t := range tools {
-		out[i] = ToolIR{
+	out := make([]ToolIR, 0, len(tools))
+	for _, t := range tools {
+		out = append(out, ToolIR{
 			Name:        t.Name,
 			Description: t.Description,
 			InputSchema: inlineJSON(t.InputSchema),
-		}
+		})
 	}
 	return out
 }

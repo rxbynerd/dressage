@@ -26,7 +26,10 @@ report.ir/
   lightweight index entry per conversation — enough to triage and shard without
   opening every file.
 - `conversations/<id>.json` is a complete, self-contained conversation IR. The
-  file name is the conversation's stable `id`.
+  file name is a filesystem-safe transform of the conversation's stable `id`
+  (see [Stable conversation id](#stable-conversation-id)); always resolve a
+  conversation's file via the manifest `file` field rather than rebuilding the
+  path from `id`.
 
 This suits a fan-out workflow: a batch judge reads the manifest, hands one
 conversation file to one worker, and writes results keyed by the same `id`.
@@ -100,7 +103,7 @@ yourself.
 | Field | Type | Notes |
 |---|---|---|
 | `provider` | string | Dominant provider in this run (`bedrock`, `azure`, `vertex`). |
-| `command` | string | The command line that produced the run. |
+| `command` | string | The command line that produced the run. Values of sensitive flags (`--credentials`, `--profile`, `--subscription`, `--workspace`, `--tenant`, `--account`) are replaced with `<redacted>`. |
 | `date_range` | object | `{ "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" }`; either may be empty for an unbounded edge. |
 
 `totals`:
@@ -183,8 +186,8 @@ than emitting nothing.
 
 | Field | Type | Notes |
 |---|---|---|
-| `system_prompt` | string | Full, untruncated. |
-| `tools` | array | Tool definitions (below). |
+| `system_prompt` | string | Full, untruncated; `""` when no system prompt was present. |
+| `tools` | array | Tool definitions (below); `[]` when no tools were defined. |
 | `turns` | array | Ordered turns (below). |
 
 `tools[]`:
@@ -208,8 +211,8 @@ than emitting nothing.
 | Field | Type | Notes |
 |---|---|---|
 | `timestamp` | timestamp | |
-| `request_id` | string | |
-| `model_id` | string | |
+| `request_id` | string | Omitted when empty. |
+| `model_id` | string | Omitted when empty. |
 | `input_tokens` | integer | |
 | `output_tokens` | integer | |
 | `cache_read_tokens` | integer | |
@@ -229,7 +232,7 @@ best-effort `text` payload. A consumer must not assume the set is closed.
 | `text` | `text` | |
 | `thinking` | `text` | Model reasoning, where the provider exposes it. |
 | `tool_use` | `tool_id`, `tool_name`, `tool_input` | `tool_input` is inline JSON. |
-| `tool_result` | `tool_id`, `is_error`, `result_content` | `is_error` omitted when false. |
+| `tool_result` | `tool_id`, `is_error`, `result_content` | `is_error` omitted when false; `result_content` omitted when empty. |
 | `media` | `mime_type`, and either `file_uri` **or** `inline` + `byte_size` | See below. |
 
 A `media` block is metadata only — the raw bytes are **not** inlined here. For

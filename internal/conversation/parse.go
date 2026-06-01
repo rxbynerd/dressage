@@ -4,6 +4,7 @@
 package conversation
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -36,11 +37,23 @@ type apiContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"` // tool_result content
 	IsError   bool            `json:"is_error,omitempty"`
+	Source    *apiImageSource `json:"source,omitempty"` // image/document source (for "image"/"document")
+}
+
+// apiImageSource is the source of an Anthropic image/document content block:
+// either base64-inlined bytes ({type:"base64", media_type, data}) or a URL
+// reference ({type:"url", url}).
+type apiImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+	URL       string `json:"url"`
 }
 
 type apiTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
 // extractSessionAnthropic parses an Anthropic Messages API request body and
@@ -245,15 +258,17 @@ func extractSystemPrompt(raw json.RawMessage) string {
 	return string(raw)
 }
 
+// extractTools maps Anthropic tools[] to model.ToolDef, carrying the full
+// description and the input_schema verbatim. Descriptions are NOT truncated
+// here: truncation is a presentation concern handled at render time.
 func extractTools(tools []apiTool) []model.ToolDef {
 	result := make([]model.ToolDef, len(tools))
 	for i, t := range tools {
-		desc := t.Description
-		// Truncate long descriptions for display.
-		if len(desc) > 200 {
-			desc = desc[:200] + "..."
+		result[i] = model.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
 		}
-		result[i] = model.ToolDef{Name: t.Name, Description: desc}
 	}
 	return result
 }
@@ -309,9 +324,37 @@ func convertContentBlock(b apiContentBlock) model.ContentBlock {
 			ResultContent: extractToolResultContent(b.Content),
 			IsError:       b.IsError,
 		}
+	case "image", "document":
+		return imageSourceBlock(b.Source)
 	default:
 		return model.ContentBlock{Type: b.Type, Text: string(b.Content)}
 	}
+}
+
+// imageSourceBlock builds a "media" content block from an Anthropic image/document
+// source. A base64 source is inline (bytes stay in the raw body; only the decoded
+// length is recorded); a url source carries the external reference.
+func imageSourceBlock(src *apiImageSource) model.ContentBlock {
+	block := model.ContentBlock{Type: "media"}
+	if src == nil {
+		return block
+	}
+	block.MimeType = src.MediaType
+	switch src.Type {
+	case "url":
+		block.FileURI = src.URL
+	case "base64":
+		block.MediaInline = true
+		block.MediaBytes = base64DecodedLen(src.Data)
+	default:
+		if src.URL != "" {
+			block.FileURI = src.URL
+		} else if src.Data != "" {
+			block.MediaInline = true
+			block.MediaBytes = base64DecodedLen(src.Data)
+		}
+	}
+	return block
 }
 
 // extractToolResultContent handles both string and array formats for tool_result content.
@@ -357,4 +400,18 @@ func prettyJSON(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return string(pretty)
+}
+
+// base64DecodedLen returns the number of bytes a standard base64 string decodes
+// to, without allocating the decoded buffer. It returns 0 for invalid input so
+// the caller records an unknown size rather than a misleading one.
+func base64DecodedLen(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return 0
+	}
+	return int64(len(b))
 }

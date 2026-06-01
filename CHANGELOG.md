@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Machine-readable Intermediate Representation (IR) export, a second output
+  sink alongside the HTML report. Selected with the new persistent `--format`
+  flag (`html` default, `ir`, or `both`) and `--ir-dir`, it writes a directory
+  of one JSON file per conversation plus a `manifest.json` index. Each
+  conversation file carries both the reconstructed conversation (system prompt,
+  tools with full descriptions and input schemas, turns of typed blocks with
+  per-turn metrics) and the raw per-invocation request/response pairs with the
+  provider JSON bodies embedded inline, so a downstream analysis program can
+  consume conversations at full fidelity without re-fetching or re-parsing
+  provider logs. Conversations carry a stable, run-order-independent id; output
+  is deterministic. The schema is versioned (`dressage.ir/1.0`) and documented
+  as a consumer contract in [docs/ir-format.md](docs/ir-format.md). To support
+  faithful export the internal model now carries full (untruncated) tool
+  descriptions and input schemas — tool-description truncation moved to the HTML
+  render layer, leaving the report unchanged — and a first-class `media` content
+  block for image/file parts (replacing the previous Gemini text placeholders).
 - Google Vertex AI / Gemini log ingestion from BigQuery (the new
   `dressage vertex` subcommand). Queries a request-response logging table,
   normalizes rows into provider-neutral records, and reconstructs Gemini

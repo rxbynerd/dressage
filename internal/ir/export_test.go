@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,17 +143,27 @@ func TestIRExportDeferredProvider(t *testing.T) {
 	var manifest ir.Manifest
 	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
 
-	var deferredFile string
+	var deferred ir.ManifestEntry
+	var found bool
 	for _, e := range manifest.Conversations {
 		if e.Provider == "vertex" && !e.Reconstructed {
-			deferredFile = e.File
+			deferred = e
+			found = true
 		}
 	}
-	if deferredFile == "" {
+	if !found {
 		t.Fatal("no deferred (vertex, non-reconstructed) conversation in manifest")
 	}
 
-	raw, err := os.ReadFile(filepath.Join(tmp, filepath.FromSlash(deferredFile)))
+	// Close the loop on the manifest index fields, not just the file content.
+	if deferred.Reconstructed {
+		t.Error("manifest entry.Reconstructed = true, want false for deferred provider")
+	}
+	if deferred.TurnCount != 0 {
+		t.Errorf("manifest entry.TurnCount = %d, want 0 for deferred provider", deferred.TurnCount)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, filepath.FromSlash(deferred.File)))
 	if err != nil {
 		t.Fatalf("read deferred conversation: %v", err)
 	}
@@ -243,6 +254,182 @@ func TestIRExportDeterministic(t *testing.T) {
 		if !bytes.Equal(ba, b[rel]) {
 			t.Errorf("file %s not deterministic across runs", rel)
 		}
+	}
+}
+
+// reportWith wraps a single conversation summary in a one-day *model.Report.
+func reportWith(cs model.ConversationSummary) *model.Report {
+	return &model.Report{
+		GeneratedAt: fixedGeneratedAt,
+		Days:        []model.DaySummary{{Conversations: []model.ConversationSummary{cs}}},
+	}
+}
+
+// TestExportFilesystemHostileSessionID asserts a session id with path-significant
+// characters cannot escape the conversations directory or break the write: the
+// id field stays raw, the file lands flat inside conversations/, and the
+// manifest `file` matches what was actually written.
+func TestExportFilesystemHostileSessionID(t *testing.T) {
+	cs := model.ConversationSummary{
+		ID:           "conv-20240115-0",
+		SessionID:    "prod/service:v2",
+		Provider:     "bedrock",
+		ModelID:      "claude-opus-4-6",
+		Identity:     "arn:aws:iam::111:user/dev",
+		StartTime:    fixedGeneratedAt,
+		EndTime:      fixedGeneratedAt,
+		MessageCount: 1,
+		Invocations: []model.Invocation{
+			{RequestID: "req-1", ModelID: "claude-opus-4-6", Input: model.Body{JSON: json.RawMessage(`{"a":1}`)}},
+		},
+	}
+	tmp := t.TempDir()
+	if err := ir.Export(reportWith(cs), tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	// (b) No file landed outside tmp/conversations/. Every emitted file must be
+	// the manifest or live under conversations/.
+	for rel := range collectFiles(t, tmp) {
+		if rel == "manifest.json" {
+			continue
+		}
+		if dir := filepath.Dir(rel); dir != "conversations" {
+			t.Errorf("file %q escaped conversations/ (dir %q)", rel, dir)
+		}
+	}
+
+	var manifest ir.Manifest
+	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
+	if len(manifest.Conversations) != 1 {
+		t.Fatalf("conversations = %d, want 1", len(manifest.Conversations))
+	}
+	entry := manifest.Conversations[0]
+
+	// (c) The filename has no path separator.
+	if strings.ContainsAny(filepath.Base(entry.File), `/\`) {
+		t.Errorf("filename contains a separator: %q", entry.File)
+	}
+	if entry.File != "conversations/prod_service_v2.json" {
+		t.Errorf("manifest file = %q, want conversations/prod_service_v2.json", entry.File)
+	}
+
+	// (e) The manifest file path matches the actual file on disk.
+	if _, err := os.Stat(filepath.Join(tmp, filepath.FromSlash(entry.File))); err != nil {
+		t.Errorf("manifest file does not match disk: %v", err)
+	}
+
+	// (d) The written JSON's top-level id is the unmodified raw session id, and
+	// (a) Export returned nil (asserted above).
+	var conv ir.ConversationIR
+	readJSON(t, filepath.Join(tmp, filepath.FromSlash(entry.File)), &conv)
+	if conv.ID != "prod/service:v2" {
+		t.Errorf("conversation id = %q, want the raw session id unmodified", conv.ID)
+	}
+	if entry.ID != "prod/service:v2" {
+		t.Errorf("manifest entry id = %q, want the raw session id unmodified", entry.ID)
+	}
+}
+
+// TestIRExportEmptyReport asserts a zero-conversation report writes a valid
+// empty manifest and creates conversations/ without error.
+func TestIRExportEmptyReport(t *testing.T) {
+	rpt := &model.Report{GeneratedAt: fixedGeneratedAt}
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+		t.Fatalf("export empty report: %v", err)
+	}
+
+	if info, err := os.Stat(filepath.Join(tmp, "conversations")); err != nil || !info.IsDir() {
+		t.Errorf("conversations/ not created: err=%v", err)
+	}
+
+	var manifest ir.Manifest
+	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
+	if manifest.SchemaVersion != ir.SchemaVersion {
+		t.Errorf("schema_version = %q, want %q", manifest.SchemaVersion, ir.SchemaVersion)
+	}
+	if len(manifest.Conversations) != 0 {
+		t.Errorf("conversations = %d, want 0", len(manifest.Conversations))
+	}
+	if manifest.Totals.Conversations != 0 {
+		t.Errorf("totals.conversations = %d, want 0", manifest.Totals.Conversations)
+	}
+	// The conversations array must serialize as [] (an empty JSON array), not null.
+	raw, err := os.ReadFile(filepath.Join(tmp, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	if !bytes.Contains(raw, []byte(`"conversations": []`)) {
+		t.Errorf("empty manifest should carry \"conversations\": [], got:\n%s", raw)
+	}
+}
+
+// TestIRExportNonJSONToolInputRoundTrips asserts a tool_use block whose
+// ToolInput is not valid JSON survives Export -> disk -> Unmarshal as a JSON
+// string (not null and not invalid JSON).
+func TestIRExportNonJSONToolInputRoundTrips(t *testing.T) {
+	cs := model.ConversationSummary{
+		ID:           "conv-20240115-0",
+		SessionID:    "tool-input-sess",
+		Provider:     "bedrock",
+		ModelID:      "claude-opus-4-6",
+		StartTime:    fixedGeneratedAt,
+		EndTime:      fixedGeneratedAt,
+		MessageCount: 1,
+		Invocations: []model.Invocation{
+			{RequestID: "req-1", ModelID: "claude-opus-4-6", Input: model.Body{JSON: json.RawMessage(`{}`)}},
+		},
+		Detail: &model.ConversationDetail{
+			Turns: []model.Turn{{
+				Role: "assistant",
+				Blocks: []model.ContentBlock{{
+					Type:      "tool_use",
+					ToolID:    "toolu_1",
+					ToolName:  "Bash",
+					ToolInput: "not json at all",
+				}},
+			}},
+		},
+	}
+	tmp := t.TempDir()
+	if err := ir.Export(reportWith(cs), tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	var manifest ir.Manifest
+	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
+	if len(manifest.Conversations) != 1 {
+		t.Fatalf("conversations = %d, want 1", len(manifest.Conversations))
+	}
+
+	// The file is valid JSON (readJSON would fail otherwise) and the tool_input
+	// round-trips to the original string.
+	var conv ir.ConversationIR
+	readJSON(t, filepath.Join(tmp, filepath.FromSlash(manifest.Conversations[0].File)), &conv)
+	if conv.Conversation == nil || len(conv.Conversation.Turns) != 1 {
+		t.Fatalf("unexpected conversation shape: %+v", conv.Conversation)
+	}
+	block := conv.Conversation.Turns[0].Blocks[0]
+	if block.ToolInput == nil {
+		t.Fatal("tool_input is null, want a JSON string")
+	}
+	var s string
+	if err := json.Unmarshal(block.ToolInput, &s); err != nil {
+		t.Fatalf("tool_input is not a JSON string: %v", err)
+	}
+	if s != "not json at all" {
+		t.Errorf("tool_input = %q, want the original string", s)
+	}
+}
+
+func TestFormatDate(t *testing.T) {
+	if got := ir.FormatDate(time.Time{}); got != "" {
+		t.Errorf("zero time = %q, want empty", got)
+	}
+	want := "2026-06-01"
+	if got := ir.FormatDate(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)); got != want {
+		t.Errorf("date = %q, want %q", got, want)
 	}
 }
 

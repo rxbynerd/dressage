@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rxbynerd/dressage/internal/model"
@@ -37,12 +39,14 @@ func mapConversation(cs model.ConversationSummary) ConversationIR {
 }
 
 // mapEntry builds the lightweight manifest index entry for a conversation. It
-// takes the already-mapped ConversationIR so the id, file name, and counts stay
-// consistent with the conversation file.
-func mapEntry(conv ConversationIR) ManifestEntry {
+// takes the already-mapped ConversationIR plus the filesystem-safe file path the
+// conversation was actually written to, so the manifest `file` always matches
+// disk (the raw id — which may contain path separators — is never used as a
+// path; see sanitizeFilename).
+func mapEntry(conv ConversationIR, file string) ManifestEntry {
 	entry := ManifestEntry{
 		ID:              conv.ID,
-		File:            conversationFile(conv.ID),
+		File:            file,
 		Provider:        conv.Provider,
 		ModelID:         conv.ModelID,
 		SessionID:       conv.SessionID,
@@ -60,9 +64,32 @@ func mapEntry(conv ConversationIR) ManifestEntry {
 	return entry
 }
 
-// conversationFile returns the manifest-relative path of a conversation's file.
-func conversationFile(id string) string {
-	return "conversations/" + id + ".json"
+// sanitizeFilename transforms a conversation id into a single flat, filesystem-
+// safe filename component (no path separators or traversal). It is applied ONLY
+// when deriving the on-disk filename and the manifest `file` path; the id field
+// in JSON content and in manifest.conversations[].id always stays the raw
+// stableID (the spec requires the raw session id there).
+//
+// Session ids come from user-controlled request fields, so a value like
+// "../../etc/foo" or "a/b" must not be allowed to escape the conversations
+// directory or break the write. Path-significant characters are replaced, a
+// filepath.Base pass catches any residual traversal, and an empty/"."/".."
+// result falls back to a content hash of the original id.
+func sanitizeFilename(id string) string {
+	replacer := strings.NewReplacer(
+		"/", "_",
+		"\\", "_",
+		":", "_",
+		"..", "__",
+	)
+	clean := replacer.Replace(id)
+	// Second pass: strip any directory portion that survived (defence in depth).
+	clean = filepath.Base(clean)
+	if clean == "" || clean == "." || clean == ".." {
+		h := sha256.Sum256([]byte(id))
+		return hex.EncodeToString(h[:])[:16]
+	}
+	return clean
 }
 
 // stableID derives a stable, run-order-independent id for a conversation. If a

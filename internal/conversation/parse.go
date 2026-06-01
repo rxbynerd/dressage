@@ -4,7 +4,6 @@
 package conversation
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -402,16 +401,17 @@ func prettyJSON(raw json.RawMessage) string {
 	return string(pretty)
 }
 
-// base64DecodedLen returns the number of bytes a standard base64 string decodes
-// to, without allocating the decoded buffer. It returns 0 for invalid input so
-// the caller records an unknown size rather than a misleading one.
+// base64DecodedLen returns the number of bytes a base64 string decodes to,
+// computed arithmetically from the input length so it allocates nothing (the
+// decoded bytes are never needed — only their count, for a media size field).
+// The formula handles both padded (standard) and unpadded (URL-safe data-URI)
+// input; for the latter the result is exact to within ≤2 bytes, acceptable for
+// a size estimate. It returns 0 for the empty string.
 func base64DecodedLen(s string) int64 {
 	if s == "" {
 		return 0
 	}
-	b, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return 0
-	}
-	return int64(len(b))
+	n := int64(len(s))
+	padding := int64(strings.Count(s, "="))
+	return (n*3)/4 - padding
 }

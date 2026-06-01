@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -134,5 +135,57 @@ func TestRunReportRejectsInvalidFormat(t *testing.T) {
 	err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common)
 	if err == nil {
 		t.Fatal("expected an error for invalid --format, got nil")
+	}
+}
+
+func TestRunReportFormatHTMLOnly(t *testing.T) {
+	tmp := t.TempDir()
+	out := filepath.Join(tmp, "report.html")
+	common := &commonFlags{output: out, format: "html"}
+
+	if err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common); err != nil {
+		t.Fatalf("runReport: %v", err)
+	}
+
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("HTML report not written for --format html: %v", err)
+	}
+	// The default format must NOT create the IR directory.
+	if _, err := os.Stat(filepath.Join(tmp, "report.ir")); !os.IsNotExist(err) {
+		t.Errorf("IR dir should not exist for --format html, stat err = %v", err)
+	}
+}
+
+func TestCommandStringRedactsSensitiveFlags(t *testing.T) {
+	orig := os.Args
+	t.Cleanup(func() { os.Args = orig })
+
+	os.Args = []string{
+		"dressage", "vertex",
+		"--credentials", "/path/to/key.json",
+		"--profile", "prod-profile",
+		"--subscription=11111111-2222-3333-4444-555555555555",
+		"--bucket", "my-public-bucket",
+	}
+
+	got := commandString()
+
+	for _, secret := range []string{"/path/to/key.json", "prod-profile", "11111111-2222-3333-4444-555555555555"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("command string leaks %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "<redacted>") {
+		t.Errorf("command string has no redaction marker: %s", got)
+	}
+	// Flag names and non-sensitive values must survive.
+	if !strings.Contains(got, "--credentials <redacted>") {
+		t.Errorf("expected --credentials <redacted>, got: %s", got)
+	}
+	if !strings.Contains(got, "--subscription=<redacted>") {
+		t.Errorf("expected --subscription=<redacted> (=form), got: %s", got)
+	}
+	if !strings.Contains(got, "--bucket my-public-bucket") {
+		t.Errorf("non-sensitive flag value was dropped: %s", got)
 	}
 }

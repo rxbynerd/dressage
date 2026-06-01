@@ -43,10 +43,10 @@ conversation file to one worker, and writes results keyed by the same `id`.
 - **Omitted fields.** Fields documented as optional are omitted when empty
   (Go `omitempty`); a consumer must treat an absent field as its zero value.
   `conversation` is the sole exception: it is always present, and is explicitly
-  `null` for deferred providers (see below).
+  `null` when the conversation was not reconstructed (see below).
 - **Determinism.** For a given report the output is byte-stable across runs: the
-  manifest index is sorted by `start_time` then `id`, and file names derive from
-  the stable `id`.
+  manifest index is sorted by `start_time` then `id`, and file names derive
+  deterministically from the `id` via the filesystem-safe transform below.
 
 ## Schema version
 
@@ -73,6 +73,16 @@ time:
 Each conversation also carries `display_id`, the internal `conv-YYYYMMDD-N`
 identifier shown in the HTML report. `display_id` is **run-order dependent** and
 must not be used as a stable key; it exists only to cross-reference the report.
+
+**Filenames.** A session id can contain path-significant characters (`/`, `\`,
+`:`) because it comes from user-controlled request fields. The `id` field in the
+content always keeps the raw value, but the on-disk filename and the manifest
+`file` path apply a filesystem-safe transform: those characters are replaced
+with `_`, any residual path component is stripped, an empty result falls back to
+a content hash, and distinct ids that collapse to the same name are
+disambiguated with a `_2`, `_3`, … suffix. Always locate a conversation file via
+the manifest `file` field rather than constructing `conversations/<id>.json`
+yourself.
 
 ## `manifest.json`
 
@@ -107,14 +117,14 @@ must not be used as a stable key; it exists only to cross-reference the report.
 
 | Field | Type | Notes |
 |---|---|---|
-| `id` | string | Stable id; also the conversation file name. |
-| `file` | string | Path relative to the IR directory, e.g. `conversations/<id>.json`. |
+| `id` | string | Stable id (raw, may contain `/` etc. when it is a session id). |
+| `file` | string | Path relative to the IR directory, e.g. `conversations/<name>.json`, where `<name>` is the id passed through a filesystem-safe transform (see [Stable conversation id](#stable-conversation-id)). |
 | `provider` | string | |
 | `model_id` | string | |
 | `session_id` | string | Omitted when no session id was found. |
 | `start_time` | timestamp | |
 | `end_time` | timestamp | |
-| `turn_count` | integer | Reconstructed turns; `0` for deferred providers. |
+| `turn_count` | integer | Reconstructed turns; `0` when not reconstructed. |
 | `invocation_count` | integer | Underlying request/response pairs. |
 | `input_tokens` | integer | |
 | `output_tokens` | integer | |
@@ -137,7 +147,7 @@ Top-level fields:
 | `start_time` | timestamp | |
 | `end_time` | timestamp | |
 | `stats` | object | Per-conversation aggregates (below). |
-| `conversation` | object \| null | Reconstructed view, or `null` for deferred providers. |
+| `conversation` | object \| null | Reconstructed view, or `null` when not reconstructed (see `reconstructed` and Layer 1 below). |
 | `invocations` | array | Raw request/response pairs; **always populated**. |
 
 `identity`:
@@ -162,10 +172,14 @@ Top-level fields:
 ### Layer 1 — `conversation` (reconstructed view)
 
 The normalized, reconstructed view a judge reads to understand "what happened".
-It is `null` when reconstruction was not performed — currently for **deferred
-providers** (non-Gemini Vertex, e.g. Claude-on-Vertex). When `conversation` is
-`null`, `invocations` is still fully populated, so the IR degrades gracefully
-rather than emitting nothing.
+It is `null` when reconstruction was not performed — in two cases: for
+**deferred providers** (non-Gemini Vertex, e.g. Claude-on-Vertex), and for
+conversations assembled by the **time-gap heuristic** rather than by session id
+(records that carry no session id are grouped by a 5-minute gap and are not
+reconstructed; a pre-existing limitation, present in the HTML report too). In
+both cases `reconstructed` is `false`. When `conversation` is `null`,
+`invocations` is still fully populated, so the IR degrades gracefully rather
+than emitting nothing.
 
 | Field | Type | Notes |
 |---|---|---|

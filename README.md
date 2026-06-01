@@ -54,7 +54,7 @@ flags shared by every provider and may be given before or after the subcommand:
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
 | `--output` | `report.html` | Output HTML file path |
 | `--format` | `html` | Output format: `html`, `ir`, or `both` (see [Outputs](#outputs)) |
-| `--ir-dir` | derived | IR output directory (default: `--output` with its extension replaced by `.ir/`) |
+| `--ir-dir` | derived | IR output directory (default: `--output` with its extension replaced by `.ir`) |
 
 The `bedrock` subcommand adds S3-specific flags:
 
@@ -160,7 +160,7 @@ report.ir/
 ```
 
 `--ir-dir` overrides the destination; by default it is the `--output` path with
-its extension replaced by `.ir/` (so `--output march.html` yields `march.ir/`).
+its extension replaced by `.ir` (so `--output march.html` yields `march.ir/`).
 Each conversation file carries both the reconstructed conversation
 (system prompt, tools, turns of typed blocks, per-turn metrics) and the raw
 per-invocation request/response pairs with the provider JSON bodies embedded

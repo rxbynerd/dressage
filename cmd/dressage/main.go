@@ -34,7 +34,7 @@ type commonFlags struct {
 	end    string
 	output string
 	format string // output format: "html", "ir", or "both"
-	irDir  string // IR output directory (defaults to --output with .ir/ extension)
+	irDir  string // IR output directory (defaults to --output with its extension replaced by .ir)
 }
 
 func main() {
@@ -78,7 +78,7 @@ Choose a provider subcommand (e.g. "dressage bedrock") to ingest logs.`,
 	pf.StringVar(&common.end, "end", "", "End date filter (YYYY-MM-DD)")
 	pf.StringVar(&common.output, "output", "report.html", "Output HTML file path")
 	pf.StringVar(&common.format, "format", "html", "Output format: html, ir, or both")
-	pf.StringVar(&common.irDir, "ir-dir", "", "IR output directory (default: --output with its extension replaced by .ir/)")
+	pf.StringVar(&common.irDir, "ir-dir", "", "IR output directory (default: --output with its extension replaced by .ir)")
 
 	return root
 }
@@ -375,8 +375,43 @@ func resolveIRDir(common *commonFlags) string {
 	return strings.TrimSuffix(out, ext) + ".ir"
 }
 
+// sensitiveFlags are flags whose values may identify or grant access to a
+// resource (credential paths, account/subscription ids, workspace/tenant
+// GUIDs). Their values are redacted from the command string recorded in the IR
+// manifest, which is the artifact most likely to be shared, archived, or fed to
+// an analysis program.
+var sensitiveFlags = map[string]bool{
+	"--credentials":  true,
+	"--profile":      true,
+	"--subscription": true,
+	"--workspace":    true,
+	"--tenant":       true,
+	"--account":      true,
+}
+
 // commandString reconstructs the invoked command line for the IR manifest's
-// source metadata, so a downstream consumer can see how the IR was produced.
+// source metadata, so a downstream consumer can see how the IR was produced,
+// with the values of sensitive flags redacted. It handles both the
+// "--flag value" and "--flag=value" spellings.
 func commandString() string {
-	return strings.Join(os.Args, " ")
+	out := make([]string, 0, len(os.Args))
+	redactNext := false
+	for _, a := range os.Args {
+		if redactNext {
+			out = append(out, "<redacted>")
+			redactNext = false
+			continue
+		}
+		// "--flag=value": redact the value, keep the flag name.
+		if eq := strings.IndexByte(a, '='); eq > 0 && sensitiveFlags[a[:eq]] {
+			out = append(out, a[:eq]+"=<redacted>")
+			continue
+		}
+		// "--flag value": redact the following arg.
+		if sensitiveFlags[a] {
+			redactNext = true
+		}
+		out = append(out, a)
+	}
+	return strings.Join(out, " ")
 }

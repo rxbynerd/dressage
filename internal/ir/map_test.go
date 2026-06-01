@@ -1,3 +1,5 @@
+// package ir (not ir_test): these tests exercise unexported mapping helpers
+// (stableID, mapConversation, mapBlock, sanitizeFilename, etc.) directly.
 package ir
 
 import (
@@ -85,12 +87,15 @@ func TestMapConversationDeferredProviderHasNullConversation(t *testing.T) {
 		t.Errorf("expected \"conversation\":null in output, got: %s", b)
 	}
 
-	entry := mapEntry(conv)
+	entry := mapEntry(conv, "conversations/x.json")
 	if entry.Reconstructed {
 		t.Error("manifest entry Reconstructed = true, want false for deferred provider")
 	}
 	if entry.TurnCount != 0 {
 		t.Errorf("manifest entry TurnCount = %d, want 0", entry.TurnCount)
+	}
+	if entry.File != "conversations/x.json" {
+		t.Errorf("manifest entry File = %q, want the path passed in", entry.File)
 	}
 }
 
@@ -234,5 +239,84 @@ func TestInlineJSONDropsInvalid(t *testing.T) {
 	valid := json.RawMessage(`{"k":1}`)
 	if got := inlineJSON(valid); string(got) != string(valid) {
 		t.Errorf("inlineJSON(valid) = %s, want %s", got, valid)
+	}
+}
+
+func TestSanitizeFilename(t *testing.T) {
+	cases := []struct {
+		name string
+		id   string
+		want string
+	}{
+		{"plain", "sess-abc-123", "sess-abc-123"},
+		{"hash id", "c135963494d637fd", "c135963494d637fd"},
+		{"forward slash", "a/b", "a_b"},
+		{"backslash", `a\b`, "a_b"},
+		{"colon", "prod:v2", "prod_v2"},
+		{"mixed separators", "prod/service:v2", "prod_service_v2"},
+		{"dot-dot traversal", "../../escape", "______escape"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := sanitizeFilename(c.id)
+			if got != c.want {
+				t.Errorf("sanitizeFilename(%q) = %q, want %q", c.id, got, c.want)
+			}
+			// The result must be a single flat component: filepath.Base is a
+			// no-op and there is no separator.
+			if strings.ContainsAny(got, `/\`) {
+				t.Errorf("sanitizeFilename(%q) = %q contains a path separator", c.id, got)
+			}
+		})
+	}
+}
+
+func TestSanitizeFilenameDegenerateFallsBackToHash(t *testing.T) {
+	// An id that collapses to "", "." or ".." must fall back to a 16-hex hash.
+	for _, id := range []string{"", ".", "/", "//"} {
+		got := sanitizeFilename(id)
+		if got == "" || got == "." || got == ".." {
+			t.Errorf("sanitizeFilename(%q) = %q, want a safe non-empty name", id, got)
+		}
+	}
+}
+
+func TestUniqueNameDisambiguatesCollisions(t *testing.T) {
+	used := make(map[string]int)
+	if got := uniqueName(used, "a_b"); got != "a_b" {
+		t.Errorf("first = %q, want a_b", got)
+	}
+	if got := uniqueName(used, "a_b"); got != "a_b_2" {
+		t.Errorf("second = %q, want a_b_2", got)
+	}
+	if got := uniqueName(used, "a_b"); got != "a_b_3" {
+		t.Errorf("third = %q, want a_b_3", got)
+	}
+	// A real id that literally equals an earlier disambiguated form must not
+	// collide with it.
+	if got := uniqueName(used, "a_b_2"); got != "a_b_2_2" {
+		t.Errorf("literal a_b_2 = %q, want a_b_2_2 (no overwrite)", got)
+	}
+}
+
+func TestConversationIdentityFallback(t *testing.T) {
+	// No invocations: identity falls back to the summary's principal-only string.
+	cs := model.ConversationSummary{Identity: "arn:aws:iam::111:user/dev"}
+	id := conversationIdentity(cs)
+	if id.Principal != "arn:aws:iam::111:user/dev" {
+		t.Errorf("fallback principal = %q, want the summary identity", id.Principal)
+	}
+	if id.Display != "" || id.Extra != nil {
+		t.Errorf("fallback identity should carry only principal, got %+v", id)
+	}
+}
+
+func TestMapBlockUnknownTypePassesThrough(t *testing.T) {
+	block := mapBlock(model.ContentBlock{Type: "redacted_thinking", Text: "opaque"})
+	if block.Type != "redacted_thinking" {
+		t.Errorf("Type = %q, want the provider type preserved", block.Type)
+	}
+	if block.Text != "opaque" {
+		t.Errorf("Text = %q, want the best-effort text payload", block.Text)
 	}
 }

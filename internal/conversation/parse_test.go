@@ -476,3 +476,41 @@ func TestConvertContentBlockImageMedia(t *testing.T) {
 		t.Errorf("url media block = %+v, want external reference", urlBlock)
 	}
 }
+
+func TestImageSourceBlockUnknownType(t *testing.T) {
+	// An unrecognized source type still produces a media block, inferring inline
+	// vs external from whichever of URL/Data is populated.
+	withData := imageSourceBlock(&apiImageSource{Type: "future-kind", MediaType: "image/webp", Data: "aGVsbG8="})
+	if withData.Type != "media" || !withData.MediaInline || withData.MediaBytes != 5 {
+		t.Errorf("unknown-type with data = %+v, want inline media of 5 bytes", withData)
+	}
+
+	withURL := imageSourceBlock(&apiImageSource{Type: "future-kind", MediaType: "image/webp", URL: "https://example.com/x.webp"})
+	if withURL.Type != "media" || withURL.FileURI != "https://example.com/x.webp" || withURL.MediaInline {
+		t.Errorf("unknown-type with url = %+v, want external media", withURL)
+	}
+
+	// A nil source yields an empty media block rather than panicking.
+	if got := imageSourceBlock(nil); got.Type != "media" {
+		t.Errorf("nil source block = %+v, want empty media block", got)
+	}
+}
+
+func TestBase64DecodedLen(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"", 0},
+		{"aGVsbG8=", 5},     // "hello", one pad
+		{"iVBORw0KGgo=", 8}, // 12 chars, one pad
+		{"YWJjZA==", 4},     // "abcd", two pads
+		{"YWJj", 3},         // "abc", no pad
+		{"YWJjZGVmZ2g=", 8}, // "abcdefgh"-ish, one pad
+	}
+	for _, c := range cases {
+		if got := base64DecodedLen(c.in); got != c.want {
+			t.Errorf("base64DecodedLen(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}

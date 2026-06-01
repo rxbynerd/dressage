@@ -17,6 +17,7 @@ import (
 	"github.com/rxbynerd/dressage/internal/report"
 	"github.com/rxbynerd/dressage/internal/s3fetch"
 	"github.com/rxbynerd/dressage/internal/summary"
+	"github.com/rxbynerd/dressage/internal/vertexfetch"
 )
 
 const dateFormat = "2006-01-02"
@@ -37,6 +38,7 @@ func main() {
 	root.AddCommand(newBedrockCommand(&common))
 	root.AddCommand(newAzureCommand(&common))
 	root.AddCommand(newAzureStorageCommand(&common))
+	root.AddCommand(newVertexCommand(&common))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -208,6 +210,52 @@ func newAzureStorageCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
 
 	_ = cmd.MarkFlagRequired("account")
+
+	return cmd
+}
+
+// newVertexCommand builds the "vertex" subcommand, which ingests Google Vertex
+// AI request-response invocation logs from a BigQuery dataset and renders them
+// via the shared report pipeline. Gemini invocations are reconstructed into full
+// conversations; non-Gemini (e.g. Claude-on-Vertex) invocations contribute to
+// summary stats but are not yet reconstructed (tracked in issue #4).
+func newVertexCommand(common *commonFlags) *cobra.Command {
+	var (
+		project     string
+		dataset     string
+		table       string
+		location    string
+		credentials string
+	)
+
+	cmd := &cobra.Command{
+		Use:          "vertex",
+		Short:        "Analyze Google Vertex AI / Gemini invocation logs from BigQuery",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client, err := vertexfetch.NewClient(cmd.Context(), project, credentials)
+			if err != nil {
+				return fmt.Errorf("creating Vertex BigQuery client: %w", err)
+			}
+			defer client.Close()
+
+			log.Println("Querying Vertex AI invocation logs from BigQuery...")
+			fetcher := vertexfetch.New(client, project, dataset, table, location)
+
+			return runReport(cmd.Context(), fetcher, "Vertex AI Invocation Log Report", common)
+		},
+	}
+
+	flags := cmd.Flags()
+	flags.StringVar(&project, "project", "", "GCP project containing the BigQuery logging dataset (required)")
+	flags.StringVar(&dataset, "dataset", "", "BigQuery dataset holding the request-response logs (required)")
+	flags.StringVar(&table, "table", "", "BigQuery table holding the request-response logs (required)")
+	flags.StringVar(&location, "location", "", "BigQuery dataset location (e.g. us-central1; inferred if empty)")
+	flags.StringVar(&credentials, "credentials", "", "Path to a service-account key JSON file (default: Application Default Credentials)")
+
+	_ = cmd.MarkFlagRequired("project")
+	_ = cmd.MarkFlagRequired("dataset")
+	_ = cmd.MarkFlagRequired("table")
 
 	return cmd
 }

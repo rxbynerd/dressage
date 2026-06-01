@@ -16,7 +16,7 @@ func TestFamilyDispatch(t *testing.T) {
 	}{
 		{"azure is openai", "azure", "", familyOpenAI},
 		{"vertex gemini", "vertex", "gemini-2.0-flash", familyGemini},
-		{"vertex claude", "vertex", "claude-3-5-sonnet@20240620", familyAnthropic},
+		{"vertex claude is deferred", "vertex", "claude-3-5-sonnet@20240620", familyVertexDeferred},
 		{"bedrock defaults anthropic", "bedrock", "anthropic.claude-3", familyAnthropic},
 		{"unknown defaults anthropic", "mystery", "x", familyAnthropic},
 	}
@@ -29,16 +29,34 @@ func TestFamilyDispatch(t *testing.T) {
 	}
 }
 
-// A Gemini-on-Vertex record routes to the (unimplemented) Gemini family, which
-// must return nil rather than silently decoding with the Anthropic decoder.
-func TestReconstructGeminiStubReturnsNil(t *testing.T) {
+// A Gemini-on-Vertex record routes to the Gemini reconstructor, which decodes
+// the contents[]/parts[] envelope rather than the Anthropic decoder.
+func TestReconstructGeminiRoutes(t *testing.T) {
 	rec := model.Record{
 		Provider:  "vertex",
 		ModelID:   "gemini-2.0-flash",
 		Timestamp: time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
 		Input:     model.Body{JSON: []byte(`{"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`)},
 	}
+	got := Reconstruct([]model.Record{rec})
+	if got == nil {
+		t.Fatal("Reconstruct(gemini) = nil, want a reconstructed detail")
+	}
+	if len(got.Turns) != 1 || got.Turns[0].Role != "user" || got.Turns[0].Blocks[0].Text != "hi" {
+		t.Errorf("Reconstruct(gemini) turns = %+v, want one user turn with text 'hi'", got.Turns)
+	}
+}
+
+// A non-Gemini Vertex record (e.g. Claude-on-Vertex) is deferred: it must not be
+// reconstructed here (tracked in #4), so Reconstruct returns nil.
+func TestReconstructVertexClaudeDeferred(t *testing.T) {
+	rec := model.Record{
+		Provider:  "vertex",
+		ModelID:   "claude-3-5-sonnet@20240620",
+		Timestamp: time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC),
+		Input:     model.Body{JSON: []byte(`{"messages":[{"role":"user","content":"hi"}]}`)},
+	}
 	if got := Reconstruct([]model.Record{rec}); got != nil {
-		t.Errorf("Reconstruct(gemini) = %+v, want nil (stub)", got)
+		t.Errorf("Reconstruct(vertex claude) = %+v, want nil (deferred to #4)", got)
 	}
 }

@@ -213,6 +213,71 @@ func TestSummarizeShortSessionID(t *testing.T) {
 	}
 }
 
+// Vertex records flow through Summarize end-to-end. Like every provider, the
+// turn-by-turn Detail is produced for session-grouped conversations; here both
+// records carry a _session_ marker so they are session-grouped. The Gemini
+// conversation gets a reconstructed Detail; the Claude-on-Vertex conversation
+// still appears in the stats and conversation list but has no Detail (the
+// reconstructor defers it to #4).
+func TestSummarizeVertexGeminiAndDeferredClaude(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	gemReq := `{"systemInstruction":{"parts":[{"text":"_session_gem-1111"}]},"contents":[{"role":"user","parts":[{"text":"hi"}]}]}`
+	gemResp := `{"candidates":[{"content":{"role":"model","parts":[{"text":"hello"}]}}],"usageMetadata":{"promptTokenCount":5,"candidatesTokenCount":2}}`
+
+	vertexRecord := func(modelID, input, output string, in, out int64) model.Record {
+		return model.Record{
+			Provider:  "vertex",
+			Timestamp: base,
+			ModelID:   modelID,
+			RequestID: modelID + "-1",
+			Operation: "generateContent",
+			Identity:  model.Identity{Extra: map[string]string{"project": "p"}},
+			Input:     model.Body{JSON: json.RawMessage(input), TokenCount: in},
+			Output:    model.Body{JSON: json.RawMessage(output), TokenCount: out},
+		}
+	}
+
+	claudeReq := `{"messages":[{"role":"user","content":"hi"}],"metadata":{"user_id":"u_account__session_claude-2222"}}`
+
+	logs := []model.Record{
+		vertexRecord("gemini-2.0-flash", gemReq, gemResp, 5, 2),
+		vertexRecord("claude-3-5-sonnet@20240620", claudeReq, `{}`, 7, 3),
+	}
+
+	rpt := Summarize(logs)
+
+	if rpt.TotalStats.InvocationCount != 2 {
+		t.Errorf("InvocationCount = %d, want 2", rpt.TotalStats.InvocationCount)
+	}
+	if rpt.TotalStats.InputTokens != 12 || rpt.TotalStats.OutputTokens != 5 {
+		t.Errorf("tokens = %d/%d, want 12/5 (both models counted)", rpt.TotalStats.InputTokens, rpt.TotalStats.OutputTokens)
+	}
+	if len(rpt.Days) != 1 {
+		t.Fatalf("days = %d, want 1", len(rpt.Days))
+	}
+
+	var gemini, claude *model.ConversationSummary
+	for i := range rpt.Days[0].Conversations {
+		c := &rpt.Days[0].Conversations[i]
+		switch c.ModelID {
+		case "gemini-2.0-flash":
+			gemini = c
+		case "claude-3-5-sonnet@20240620":
+			claude = c
+		}
+	}
+	if gemini == nil || claude == nil {
+		t.Fatalf("expected both a gemini and a claude conversation, got %+v", rpt.Days[0].Conversations)
+	}
+	if gemini.Detail == nil || len(gemini.Detail.Turns) == 0 {
+		t.Errorf("gemini conversation should have a reconstructed Detail, got %+v", gemini.Detail)
+	}
+	if claude.Detail != nil {
+		t.Errorf("claude-on-vertex conversation Detail = %+v, want nil (deferred to #4)", claude.Detail)
+	}
+}
+
 func TestPrettyJSON(t *testing.T) {
 	cases := []struct {
 		name  string

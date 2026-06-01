@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Google Vertex AI / Gemini log ingestion from BigQuery (the new
+  `dressage vertex` subcommand). Queries a request-response logging table,
+  normalizes rows into provider-neutral records, and reconstructs Gemini
+  conversations from the `contents[]`/`parts[]` envelope — mapping
+  `functionCall`/`functionResponse` to tool use/results, `thought` parts to
+  thinking blocks, and aggregating streamed response chunks. Claude-on-Vertex
+  rows contribute to summary stats but are not yet reconstructed (deferred to
+  #4). The logging schema has no per-row caller identity, and Gemini exposes no
+  cache-write counter; both gaps are documented. See
+  [docs/providers/vertex.md](docs/providers/vertex.md).
 - Azure OpenAI log ingestion via Azure Monitor Log Analytics (the new
   `dressage azure` subcommand). Queries the `AzureDiagnostics` table for the
   `RequestResponse` category, reconstructs OpenAI Chat Completions
@@ -30,9 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fetch.Fetcher` interface; conversation reconstruction dispatches on a
   provider envelope family. This is the groundwork for upcoming providers
   (Azure OpenAI, Vertex AI / Gemini).
-- Per-provider documentation under `docs/providers/` (Bedrock and Azure
-  guides, plus a planned-status stub for Vertex) and a "Supported providers"
-  table in the README.
+- Per-provider documentation under `docs/providers/` (Bedrock, Azure, and
+  Vertex guides) and a "Supported providers" table in the README.
 
 ### Changed
 

@@ -251,6 +251,7 @@ func buildConversationsTimeBased(dayRecords []model.Record, dayKey string, start
 func buildConversationSummary(id string, records []model.Record) model.ConversationSummary {
 	summary := model.ConversationSummary{
 		ID:           id,
+		Provider:     records[0].Provider,
 		ModelID:      records[0].ModelID,
 		Identity:     records[0].Identity.Principal,
 		StartTime:    records[0].Timestamp,
@@ -278,6 +279,13 @@ func buildConversationSummary(id string, records []model.Record) model.Conversat
 			InputTokens:  rec.Input.TokenCount,
 			OutputTokens: rec.Output.TokenCount,
 			Identity:     rec.Identity.Principal,
+
+			// Preserve the raw record for faithful machine-readable export.
+			LatencyMs:      rec.LatencyMs,
+			FullIdentity:   rec.Identity,
+			Input:          rec.Input,
+			Output:         rec.Output,
+			ProviderExtras: rec.ProviderExtras,
 		})
 	}
 	summary.Invocations = invocations

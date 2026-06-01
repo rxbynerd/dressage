@@ -1,0 +1,396 @@
+package ir_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"flag"
+	"os"
+	"path/filepath"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/rxbynerd/dressage/internal/ir"
+	"github.com/rxbynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/summary"
+)
+
+// updateGolden regenerates the golden IR fixtures instead of asserting against
+// them. Run: go test ./internal/ir/ -run Golden -update
+var updateGolden = flag.Bool("update", false, "update golden IR fixtures")
+
+// fixedGeneratedAt pins the report's GeneratedAt so the emitted manifest is
+// deterministic across runs.
+var fixedGeneratedAt = time.Date(2024, 1, 20, 12, 0, 0, 0, time.UTC)
+
+// fixedSource is the canned run metadata used for the golden manifest.
+var fixedSource = ir.SourceInfo{
+	Provider: "bedrock",
+	Command:  "dressage bedrock --bucket my-logs --format ir",
+	DateRange: ir.ManifestDateRng{
+		Start: "2024-01-15",
+		End:   "2024-01-15",
+	},
+}
+
+// TestGoldenIRExport feeds a canned *model.Report covering all four provider
+// situations (Bedrock/Anthropic, Azure/OpenAI, Vertex/Gemini, and a deferred
+// provider) through ir.Export into a temp dir and compares every emitted file
+// byte-for-byte against committed goldens. It locks the IR schema shape,
+// determinism, and stable-id derivation.
+func TestGoldenIRExport(t *testing.T) {
+	rpt := goldenReport()
+
+	goldenDir := filepath.Join("testdata", "golden_ir")
+	if *updateGolden {
+		if err := os.RemoveAll(goldenDir); err != nil {
+			t.Fatalf("clean golden dir: %v", err)
+		}
+		if err := ir.Export(rpt, goldenDir, fixedSource); err != nil {
+			t.Fatalf("export (update): %v", err)
+		}
+		t.Logf("wrote golden IR fixtures under %s", goldenDir)
+		return
+	}
+
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	wantFiles := collectFiles(t, goldenDir)
+	gotFiles := collectFiles(t, tmp)
+
+	if len(wantFiles) != len(gotFiles) {
+		t.Fatalf("file set differs: emitted %v, golden %v", keys(gotFiles), keys(wantFiles))
+	}
+	for rel, want := range wantFiles {
+		got, ok := gotFiles[rel]
+		if !ok {
+			t.Errorf("missing emitted file %s", rel)
+			continue
+		}
+		if !bytes.Equal(want, got) {
+			t.Errorf("file %s differs from golden.\n"+
+				"If this change is intentional, re-run with -update and review the diff.", rel)
+		}
+	}
+}
+
+// TestIRExportRoundTrip exports the canned report and unmarshals each emitted
+// file back into the ir types, asserting the IR is valid, self-describing JSON.
+func TestIRExportRoundTrip(t *testing.T) {
+	rpt := goldenReport()
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	manifestBytes, err := os.ReadFile(filepath.Join(tmp, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var manifest ir.Manifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("unmarshal manifest: %v", err)
+	}
+	if manifest.SchemaVersion != ir.SchemaVersion {
+		t.Errorf("manifest schema_version = %q, want %q", manifest.SchemaVersion, ir.SchemaVersion)
+	}
+	if manifest.Totals.Conversations != len(manifest.Conversations) {
+		t.Errorf("totals.conversations = %d, but %d index entries", manifest.Totals.Conversations, len(manifest.Conversations))
+	}
+
+	for _, entry := range manifest.Conversations {
+		b, err := os.ReadFile(filepath.Join(tmp, filepath.FromSlash(entry.File)))
+		if err != nil {
+			t.Fatalf("read conversation %s: %v", entry.File, err)
+		}
+		var conv ir.ConversationIR
+		if err := json.Unmarshal(b, &conv); err != nil {
+			t.Fatalf("unmarshal conversation %s: %v", entry.File, err)
+		}
+		if conv.ID != entry.ID {
+			t.Errorf("conversation %s id = %q, want %q", entry.File, conv.ID, entry.ID)
+		}
+		if conv.SchemaVersion != ir.SchemaVersion {
+			t.Errorf("conversation %s schema_version = %q, want %q", entry.File, conv.SchemaVersion, ir.SchemaVersion)
+		}
+		// invocations are always populated; reconstructed conversations carry a
+		// non-nil conversation view, deferred ones a nil one.
+		if len(conv.Invocations) == 0 {
+			t.Errorf("conversation %s has no invocations", entry.File)
+		}
+		if entry.Reconstructed && conv.Conversation == nil {
+			t.Errorf("conversation %s marked reconstructed but conversation is null", entry.File)
+		}
+		if !entry.Reconstructed && conv.Conversation != nil {
+			t.Errorf("conversation %s marked deferred but conversation is non-null", entry.File)
+		}
+	}
+}
+
+// TestIRExportDeferredProvider asserts the deferred provider conversation
+// exports with a null conversation but populated invocations.
+func TestIRExportDeferredProvider(t *testing.T) {
+	rpt := goldenReport()
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	var manifest ir.Manifest
+	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
+
+	var deferredFile string
+	for _, e := range manifest.Conversations {
+		if e.Provider == "vertex" && !e.Reconstructed {
+			deferredFile = e.File
+		}
+	}
+	if deferredFile == "" {
+		t.Fatal("no deferred (vertex, non-reconstructed) conversation in manifest")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(tmp, filepath.FromSlash(deferredFile)))
+	if err != nil {
+		t.Fatalf("read deferred conversation: %v", err)
+	}
+	// Assert the raw JSON carries an explicit null conversation.
+	if !bytes.Contains(raw, []byte(`"conversation": null`)) {
+		t.Errorf("deferred conversation file lacks \"conversation\": null:\n%s", raw)
+	}
+
+	var conv ir.ConversationIR
+	if err := json.Unmarshal(raw, &conv); err != nil {
+		t.Fatalf("unmarshal deferred conversation: %v", err)
+	}
+	if conv.Conversation != nil {
+		t.Error("deferred conversation has non-nil conversation view")
+	}
+	if len(conv.Invocations) == 0 {
+		t.Error("deferred conversation has no invocations (must still be populated)")
+	}
+}
+
+// TestIRExportFidelity asserts that a >200-char tool description survives
+// untruncated with its input_schema intact, and that a Gemini media part is
+// exported as a media block.
+func TestIRExportFidelity(t *testing.T) {
+	rpt := goldenReport()
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	var manifest ir.Manifest
+	readJSON(t, filepath.Join(tmp, "manifest.json"), &manifest)
+
+	var sawLongTool, sawSchema, sawMedia bool
+	for _, e := range manifest.Conversations {
+		var conv ir.ConversationIR
+		readJSON(t, filepath.Join(tmp, filepath.FromSlash(e.File)), &conv)
+		if conv.Conversation == nil {
+			continue
+		}
+		for _, tool := range conv.Conversation.Tools {
+			if len(tool.Description) > 200 {
+				sawLongTool = true
+			}
+			if len(tool.InputSchema) > 0 {
+				sawSchema = true
+			}
+		}
+		for _, turn := range conv.Conversation.Turns {
+			for _, b := range turn.Blocks {
+				if b.Type == "media" {
+					sawMedia = true
+				}
+			}
+		}
+	}
+
+	if !sawLongTool {
+		t.Error("no tool with a >200-char description survived export")
+	}
+	if !sawSchema {
+		t.Error("no tool input_schema survived export")
+	}
+	if !sawMedia {
+		t.Error("no media block was produced from the Gemini media part")
+	}
+}
+
+// TestIRExportDeterministic asserts two exports of the same report into
+// different dirs produce byte-identical files.
+func TestIRExportDeterministic(t *testing.T) {
+	rpt := goldenReport()
+
+	dirA, dirB := t.TempDir(), t.TempDir()
+	if err := ir.Export(rpt, dirA, fixedSource); err != nil {
+		t.Fatalf("export A: %v", err)
+	}
+	if err := ir.Export(rpt, dirB, fixedSource); err != nil {
+		t.Fatalf("export B: %v", err)
+	}
+
+	a := collectFiles(t, dirA)
+	b := collectFiles(t, dirB)
+	if len(a) != len(b) {
+		t.Fatalf("file counts differ: %d vs %d", len(a), len(b))
+	}
+	for rel, ba := range a {
+		if !bytes.Equal(ba, b[rel]) {
+			t.Errorf("file %s not deterministic across runs", rel)
+		}
+	}
+}
+
+// goldenReport builds a deterministic *model.Report covering all four provider
+// situations by running canned records through summary.Summarize, then pinning
+// GeneratedAt. Using the real pipeline keeps the fixture honest: the same
+// grouping, reconstruction, and stable-id logic the CLI uses produces the IR.
+func goldenReport() *model.Report {
+	records := goldenRecords()
+	rpt := summary.Summarize(records)
+	rpt.GeneratedAt = fixedGeneratedAt
+	rpt.Title = "Golden IR Report"
+	return rpt
+}
+
+// goldenRecords returns canned invocation records: a reconstructed Bedrock
+// (Anthropic) conversation with a long tool description + input schema, an Azure
+// (OpenAI) conversation, a Vertex (Gemini) conversation with a media part, and a
+// deferred Claude-on-Vertex conversation.
+func goldenRecords() []model.Record {
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	longDesc := repeat("x", 250)
+
+	// Bedrock / Anthropic, session-grouped, with a long-description tool that
+	// carries an input schema.
+	bedrockIn := `{
+		"metadata":{"user_id":"user_hash_account__session_bedrock-sess-1"},
+		"system":"You are a coding assistant.",
+		"messages":[{"role":"user","content":"List the files."}],
+		"tools":[{"name":"Bash","description":"` + longDesc + `","input_schema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}}]
+	}`
+	bedrockOut := `{"id":"msg_b","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"Here are the files."}]}`
+
+	// Azure / OpenAI, session-grouped.
+	azureIn := `{
+		"user":"user_hash__session_azure-sess-1",
+		"messages":[
+			{"role":"system","content":"You are concise."},
+			{"role":"user","content":"What is 2+2?"}
+		],
+		"tools":[{"type":"function","function":{"name":"calc","description":"does math","parameters":{"type":"object","properties":{"expr":{"type":"string"}}}}}]
+	}`
+	azureOut := `{"choices":[{"message":{"role":"assistant","content":"4"},"finish_reason":"stop"}],"usage":{"prompt_tokens":20,"completion_tokens":1}}`
+
+	// Vertex / Gemini, session-grouped, with an inline media part.
+	geminiIn := `{
+		"systemInstruction":{"parts":[{"text":"You are vision-capable._session_gemini-sess-1"}]},
+		"contents":[{"role":"user","parts":[
+			{"inlineData":{"mimeType":"image/png","data":"aGVsbG8="}},
+			{"text":"What is in this image?"}
+		]}],
+		"tools":[{"functionDeclarations":[{"name":"describe","description":"describes an image","parameters":{"type":"object"}}]}]
+	}`
+	geminiOut := `{"candidates":[{"content":{"role":"model","parts":[{"text":"A greeting."}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":15,"candidatesTokenCount":3}}`
+
+	// Deferred Claude-on-Vertex: contributes to stats, no reconstruction.
+	deferredIn := `{"anthropic_version":"vertex-2023-10-16","messages":[{"role":"user","content":"hello"}]}`
+	deferredOut := `{"content":[{"type":"text","text":"hi"}]}`
+
+	return []model.Record{
+		{
+			Provider: "bedrock", Timestamp: base, RequestID: "req-bedrock-1",
+			ModelID: "claude-opus-4-6", Operation: "Converse", Status: "200",
+			Identity: model.Identity{Principal: "arn:aws:iam::111:user/dev", Extra: map[string]string{"region": "eu-west-1"}},
+			Input:    model.Body{JSON: json.RawMessage(bedrockIn), ContentType: "application/json", TokenCount: 40, CacheRead: 10, CacheWrite: 4},
+			Output:   model.Body{JSON: json.RawMessage(bedrockOut), ContentType: "application/json", TokenCount: 12},
+		},
+		{
+			Provider: "azure", Timestamp: base.Add(time.Minute), RequestID: "req-azure-1",
+			ModelID: "gpt-4o", Operation: "ChatCompletions_Create", Status: "200",
+			Identity:  model.Identity{Principal: "oid-abc", Extra: map[string]string{"resource": "my-aoai"}},
+			Input:     model.Body{JSON: json.RawMessage(azureIn), ContentType: "application/json", TokenCount: 20, CacheRead: 0},
+			Output:    model.Body{JSON: json.RawMessage(azureOut), ContentType: "application/json", TokenCount: 1},
+			LatencyMs: 800,
+		},
+		{
+			Provider: "vertex", Timestamp: base.Add(2 * time.Minute), RequestID: "req-gemini-1",
+			ModelID: "gemini-2.0-flash", Operation: "generateContent", Status: "200",
+			Identity:  model.Identity{Principal: "sa@project.iam.gserviceaccount.com"},
+			Input:     model.Body{JSON: json.RawMessage(geminiIn), ContentType: "application/json", TokenCount: 15},
+			Output:    model.Body{JSON: json.RawMessage(geminiOut), ContentType: "application/json", TokenCount: 3},
+			LatencyMs: 600,
+		},
+		{
+			Provider: "vertex", Timestamp: base.Add(3 * time.Minute), RequestID: "req-deferred-1",
+			ModelID: "claude-opus-4-6", Operation: "rawPredict", Status: "200",
+			Identity: model.Identity{Principal: "sa@project.iam.gserviceaccount.com"},
+			Input:    model.Body{JSON: json.RawMessage(deferredIn), ContentType: "application/json", TokenCount: 5},
+			Output:   model.Body{JSON: json.RawMessage(deferredOut), ContentType: "application/json", TokenCount: 2},
+		},
+	}
+}
+
+// --- helpers ---
+
+func repeat(s string, n int) string {
+	out := make([]byte, 0, len(s)*n)
+	for i := 0; i < n; i++ {
+		out = append(out, s...)
+	}
+	return string(out)
+}
+
+// collectFiles reads every regular file under root, keyed by its slash-separated
+// path relative to root.
+func collectFiles(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	files := make(map[string][]byte)
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[filepath.ToSlash(rel)] = b
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+	return files
+}
+
+func keys(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func readJSON(t *testing.T, path string, v any) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		t.Fatalf("unmarshal %s: %v", path, err)
+	}
+}

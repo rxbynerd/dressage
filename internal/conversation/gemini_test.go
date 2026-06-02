@@ -212,7 +212,7 @@ func TestReconstructGeminiStreamingAggregation(t *testing.T) {
 	}
 }
 
-func TestReconstructGeminiInlineDataPlaceholder(t *testing.T) {
+func TestReconstructGeminiInlineDataMediaBlock(t *testing.T) {
 	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
 
 	input := `{
@@ -231,14 +231,31 @@ func TestReconstructGeminiInlineDataPlaceholder(t *testing.T) {
 	}
 	blocks := detail.Turns[0].Blocks
 	if len(blocks) != 2 {
-		t.Fatalf("user blocks = %d, want 2 (inline placeholder + text)", len(blocks))
+		t.Fatalf("user blocks = %d, want 2 (media block + text)", len(blocks))
 	}
-	if blocks[0].Type != "text" || blocks[0].Text != "[inline data: image/png]" {
-		t.Errorf("block[0] = %+v, want inline-data placeholder", blocks[0])
+	if blocks[0].Type != "media" {
+		t.Fatalf("block[0].Type = %q, want media", blocks[0].Type)
+	}
+	if blocks[0].MimeType != "image/png" {
+		t.Errorf("block[0].MimeType = %q, want image/png", blocks[0].MimeType)
+	}
+	if !blocks[0].MediaInline {
+		t.Errorf("block[0].MediaInline = false, want true for inlineData")
+	}
+	// "iVBORw0KGgo=" decodes to 8 bytes.
+	if blocks[0].MediaBytes != 8 {
+		t.Errorf("block[0].MediaBytes = %d, want 8 (decoded length)", blocks[0].MediaBytes)
+	}
+	if blocks[0].FileURI != "" {
+		t.Errorf("block[0].FileURI = %q, want empty for inline media", blocks[0].FileURI)
+	}
+	// The caption text must NOT be coalesced onto the media block.
+	if blocks[1].Type != "text" || blocks[1].Text != "What is in this image?" {
+		t.Errorf("block[1] = %+v, want text caption", blocks[1])
 	}
 }
 
-func TestReconstructGeminiFileData(t *testing.T) {
+func TestReconstructGeminiFileDataMediaBlock(t *testing.T) {
 	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
 	input := `{
 		"contents": [
@@ -256,37 +273,39 @@ func TestReconstructGeminiFileData(t *testing.T) {
 	}
 	blocks := detail.Turns[0].Blocks
 	if len(blocks) != 2 {
-		t.Fatalf("user blocks = %d, want 2 (file placeholder + text)", len(blocks))
+		t.Fatalf("user blocks = %d, want 2 (media block + text)", len(blocks))
 	}
-	if blocks[0].Text != "[file: gs://bucket/doc.pdf (application/pdf)]" {
-		t.Errorf("file placeholder = %q", blocks[0].Text)
+	if blocks[0].Type != "media" {
+		t.Fatalf("block[0].Type = %q, want media", blocks[0].Type)
 	}
-	// The caption text must NOT be coalesced onto the placeholder.
+	if blocks[0].MimeType != "application/pdf" {
+		t.Errorf("block[0].MimeType = %q, want application/pdf", blocks[0].MimeType)
+	}
+	if blocks[0].FileURI != "gs://bucket/doc.pdf" {
+		t.Errorf("block[0].FileURI = %q, want gs://bucket/doc.pdf", blocks[0].FileURI)
+	}
+	if blocks[0].MediaInline {
+		t.Errorf("block[0].MediaInline = true, want false for fileData reference")
+	}
+	// The caption text must NOT be coalesced onto the media block.
 	if blocks[1].Text != "Summarize this." {
 		t.Errorf("caption block = %q, want 'Summarize this.'", blocks[1].Text)
 	}
 }
 
-func TestFileDataPlaceholderVariants(t *testing.T) {
-	cases := []struct {
-		in   geminiFileData
-		want string
-	}{
-		{geminiFileData{MimeType: "image/png", FileURI: "gs://b/x.png"}, "[file: gs://b/x.png (image/png)]"},
-		{geminiFileData{FileURI: "gs://b/x.png"}, "[file: gs://b/x.png]"},
-		{geminiFileData{MimeType: "image/png"}, "[file: image/png]"},
-		{geminiFileData{}, "[file]"},
+func TestInlineDataBlockNoMime(t *testing.T) {
+	block := inlineDataBlock(&geminiInlineData{})
+	if block.Type != "media" {
+		t.Errorf("Type = %q, want media", block.Type)
 	}
-	for _, c := range cases {
-		if got := fileDataPlaceholder(&c.in); got != c.want {
-			t.Errorf("fileDataPlaceholder(%+v) = %q, want %q", c.in, got, c.want)
-		}
+	if block.MimeType != "" {
+		t.Errorf("MimeType = %q, want empty", block.MimeType)
 	}
-}
-
-func TestInlineDataPlaceholderNoMime(t *testing.T) {
-	if got := inlineDataPlaceholder(&geminiInlineData{}); got != "[inline data]" {
-		t.Errorf("inlineDataPlaceholder(empty) = %q, want [inline data]", got)
+	if !block.MediaInline {
+		t.Errorf("MediaInline = false, want true")
+	}
+	if block.MediaBytes != 0 {
+		t.Errorf("MediaBytes = %d, want 0 for absent data", block.MediaBytes)
 	}
 }
 
@@ -319,14 +338,24 @@ func TestReconstructGeminiAllRecordsEmptyReturnsNil(t *testing.T) {
 	}
 }
 
-func TestGeminiToolsTruncatesLongDescription(t *testing.T) {
+func TestGeminiToolsKeepsFullDescriptionAndSchema(t *testing.T) {
 	long := strings.Repeat("x", 250)
-	tools := geminiTools([]geminiTool{{FunctionDeclarations: []geminiFunctionDecl{{Name: "t", Description: long}}}})
+	schema := json.RawMessage(`{"type":"object","properties":{"q":{"type":"string"}}}`)
+	tools := geminiTools([]geminiTool{{FunctionDeclarations: []geminiFunctionDecl{{
+		Name:        "t",
+		Description: long,
+		Parameters:  schema,
+	}}}})
 	if len(tools) != 1 {
 		t.Fatalf("tools = %d, want 1", len(tools))
 	}
-	if len(tools[0].Description) != 203 || tools[0].Description[200:] != "..." {
-		t.Errorf("description len = %d, want 203 ending in '...'", len(tools[0].Description))
+	// The full (untruncated) description must survive: truncation now happens at
+	// render time, not in reconstruction.
+	if tools[0].Description != long {
+		t.Errorf("description len = %d, want %d (full, untruncated)", len(tools[0].Description), len(long))
+	}
+	if string(tools[0].InputSchema) != string(schema) {
+		t.Errorf("InputSchema = %s, want %s", tools[0].InputSchema, schema)
 	}
 }
 

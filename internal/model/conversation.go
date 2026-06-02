@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 // ConversationDetail holds a fully reconstructed conversation parsed from
 // the request/response bodies of a provider's invocation records.
@@ -41,11 +44,9 @@ func (t Turn) HasToolUse() bool {
 // ContentBlock is a single content element within a turn.
 type ContentBlock struct {
 	// Type identifies the block kind. The known set ("text", "tool_use",
-	// "tool_result", "thinking") is NOT exhaustive: a dedicated "media" type is
-	// still planned for image/file parts (the Gemini reconstructor currently
-	// surfaces inlineData/fileData as labeled "text" placeholders), and
-	// unrecognized provider block types are passed through verbatim — readers
-	// must not assume the set is closed.
+	// "tool_result", "thinking", "media") is NOT exhaustive: unrecognized
+	// provider block types are passed through verbatim — readers must not assume
+	// the set is closed.
 	Type          string
 	Text          string // text content (for "text" and "thinking" types)
 	ToolName      string // tool name (for "tool_use")
@@ -53,6 +54,14 @@ type ContentBlock struct {
 	ToolInput     string // pretty-printed JSON input (for "tool_use")
 	ResultContent string // result text (for "tool_result")
 	IsError       bool   // whether tool execution errored (for "tool_result")
+
+	// Media fields (for "media"): metadata about an image/file/audio part. The
+	// raw bytes are NOT inlined here — they remain in the invocation's raw body
+	// — only the metadata needed to identify and reference the part is carried.
+	MimeType    string // declared MIME type (for "media"), may be empty
+	FileURI     string // external file reference, e.g. a gs:// URI (for "media")
+	MediaInline bool   // true when the bytes were embedded inline in the body (for "media")
+	MediaBytes  int64  // size in bytes of inline media, when known (for "media", 0 if unknown)
 }
 
 // TurnMetrics contains per-invocation performance data for an assistant turn.
@@ -72,5 +81,6 @@ type TurnMetrics struct {
 // ToolDef describes a tool available in the conversation.
 type ToolDef struct {
 	Name        string
-	Description string
+	Description string          // full, untruncated tool description
+	InputSchema json.RawMessage // full tool input/parameters JSON schema (nil if absent)
 }

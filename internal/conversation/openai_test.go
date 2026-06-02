@@ -254,7 +254,8 @@ func TestReconstructOpenAISystemPromptAndTools(t *testing.T) {
 		}
 	}
 
-	// Tools mapped; long description truncated to 200 chars + "...".
+	// Tools mapped; the full (untruncated) description survives — truncation now
+	// happens at render time, not in reconstruction.
 	if len(detail.Tools) != 2 {
 		t.Fatalf("tools = %d, want 2", len(detail.Tools))
 	}
@@ -264,8 +265,8 @@ func TestReconstructOpenAISystemPromptAndTools(t *testing.T) {
 	if detail.Tools[1].Name != "long_tool" {
 		t.Errorf("tool[1].Name = %q, want long_tool", detail.Tools[1].Name)
 	}
-	if len(detail.Tools[1].Description) != 203 { // 200 chars + "..."
-		t.Errorf("tool[1].Description length = %d, want 203 (200 + ellipsis)", len(detail.Tools[1].Description))
+	if detail.Tools[1].Description != longDesc {
+		t.Errorf("tool[1].Description length = %d, want %d (full, untruncated)", len(detail.Tools[1].Description), len(longDesc))
 	}
 }
 
@@ -392,5 +393,41 @@ func TestReconstructOpenAISkipsEmptyAssistantTurn(t *testing.T) {
 	}
 	if detail.Turns[1].Role != "assistant" || detail.Turns[1].Blocks[0].Text != "Hi!" {
 		t.Errorf("turn[1] = %+v, want assistant 'Hi!'", detail.Turns[1])
+	}
+}
+
+func TestReconstructOpenAIImageMediaBlock(t *testing.T) {
+	base := time.Date(2025, 3, 1, 9, 0, 0, 0, time.UTC)
+
+	// First user image is an inline data: URI ("aGVsbG8=" => 5 bytes); the second
+	// is an external URL.
+	input := `{
+		"messages": [
+			{"role": "user", "content": [
+				{"type": "text", "text": "Describe these"},
+				{"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+				{"type": "image_url", "image_url": {"url": "https://example.com/cat.jpg"}}
+			]}
+		]
+	}`
+	output := `{"choices": [{"message": {"role": "assistant", "content": "Two images."}, "finish_reason": "stop"}]}`
+
+	detail := Reconstruct([]model.Record{makeAzureRecord(base, "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+
+	blocks := detail.Turns[0].Blocks
+	if len(blocks) != 3 {
+		t.Fatalf("user blocks = %d, want 3 (text + 2 media)", len(blocks))
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "Describe these" {
+		t.Errorf("block[0] = %+v, want text caption", blocks[0])
+	}
+	if blocks[1].Type != "media" || blocks[1].MimeType != "image/png" || !blocks[1].MediaInline || blocks[1].MediaBytes != 5 {
+		t.Errorf("block[1] = %+v, want inline image/png media of 5 bytes", blocks[1])
+	}
+	if blocks[2].Type != "media" || blocks[2].FileURI != "https://example.com/cat.jpg" || blocks[2].MediaInline {
+		t.Errorf("block[2] = %+v, want external-url media", blocks[2])
 	}
 }

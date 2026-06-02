@@ -1,0 +1,84 @@
+{
+  "schema_version": "dressage.ir/1.0",
+  "generated_at": "2024-01-20T12:00:00Z",
+  "tool": {
+    "name": "dressage",
+    "version": "dev"
+  },
+  "source": {
+    "provider": "bedrock",
+    "command": "dressage bedrock --bucket my-logs --format ir",
+    "date_range": {
+      "start": "2024-01-15",
+      "end": "2024-01-15"
+    }
+  },
+  "totals": {
+    "conversations": 4,
+    "invocations": 4,
+    "input_tokens": 80,
+    "output_tokens": 18,
+    "errors": 0
+  },
+  "conversations": [
+    {
+      "id": "bedrock-sess-1",
+      "file": "conversations/bedrock-sess-1.json",
+      "provider": "bedrock",
+      "model_id": "claude-opus-4-6",
+      "session_id": "bedrock-sess-1",
+      "start_time": "2024-01-15T10:00:00Z",
+      "end_time": "2024-01-15T10:00:00Z",
+      "turn_count": 2,
+      "invocation_count": 1,
+      "input_tokens": 40,
+      "output_tokens": 12,
+      "error_count": 0,
+      "reconstructed": true
+    },
+    {
+      "id": "azure-sess-1",
+      "file": "conversations/azure-sess-1.json",
+      "provider": "azure",
+      "model_id": "gpt-4o",
+      "session_id": "azure-sess-1",
+      "start_time": "2024-01-15T10:01:00Z",
+      "end_time": "2024-01-15T10:01:00Z",
+      "turn_count": 2,
+      "invocation_count": 1,
+      "input_tokens": 20,
+      "output_tokens": 1,
+      "error_count": 0,
+      "reconstructed": true
+    },
+    {
+      "id": "gemini-sess-1",
+      "file": "conversations/gemini-sess-1.json",
+      "provider": "vertex",
+      "model_id": "gemini-2.0-flash",
+      "session_id": "gemini-sess-1",
+      "start_time": "2024-01-15T10:02:00Z",
+      "end_time": "2024-01-15T10:02:00Z",
+      "turn_count": 2,
+      "invocation_count": 1,
+      "input_tokens": 15,
+      "output_tokens": 3,
+      "error_count": 0,
+      "reconstructed": true
+    },
+    {
+      "id": "c135963494d637fd",
+      "file": "conversations/c135963494d637fd.json",
+      "provider": "vertex",
+      "model_id": "claude-opus-4-6",
+      "start_time": "2024-01-15T10:03:00Z",
+      "end_time": "2024-01-15T10:03:00Z",
+      "turn_count": 0,
+      "invocation_count": 1,
+      "input_tokens": 5,
+      "output_tokens": 2,
+      "error_count": 0,
+      "reconstructed": false
+    }
+  ]
+}

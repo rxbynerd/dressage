@@ -45,14 +45,16 @@ dressage vertex --project <gcp-project> --dataset <ds> --table <table> [flags]
 
 ### Flags
 
-`--start`, `--end`, and `--output` are persistent (root) flags shared by every
-provider and may be given before or after the subcommand:
+`--start`, `--end`, `--output`, `--format`, and `--ir-dir` are persistent (root)
+flags shared by every provider and may be given before or after the subcommand:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
 | `--output` | `report.html` | Output HTML file path |
+| `--format` | `html` | Output format: `html`, `ir`, or `both` (see [Outputs](#outputs)) |
+| `--ir-dir` | derived | IR output directory (default: `--output` with its extension replaced by `.ir`) |
 
 The `bedrock` subcommand adds S3-specific flags:
 
@@ -129,6 +131,51 @@ for how to enable Azure OpenAI diagnostic logging, the content-logging caveat,
 and required RBAC, and [docs/providers/vertex.md](docs/providers/vertex.md) for
 enabling Vertex AI request-response logging, the required IAM, and the Gemini
 session-grouping and cache-write caveats.
+
+## Outputs
+
+Dressage produces two kinds of output from a single fetch, selected with
+`--format`:
+
+| `--format` | Writes | For |
+|------------|--------|-----|
+| `html` (default) | the HTML report at `--output` | humans |
+| `ir` | the IR directory only | downstream tooling |
+| `both` | the HTML report **and** the IR directory | both, from one fetch |
+
+Ingestion (S3 / BigQuery / Log Analytics calls) is the expensive part, so
+`--format both` is the way to get both artifacts without fetching twice.
+
+The **IR** (Intermediate Representation) is a stable, versioned, provider-neutral
+JSON export of the same conversations the report shows, intended for a separate
+analysis program (judging, classification, signal extraction) to consume without
+re-fetching or re-parsing provider-native logs. Its directory layout is:
+
+```
+report.ir/
+├── manifest.json                    # run metadata + index of all conversations
+└── conversations/
+    ├── <id>.json                    # one self-contained conversation IR per file
+    └── …
+```
+
+`--ir-dir` overrides the destination; by default it is the `--output` path with
+its extension replaced by `.ir` (so `--output march.html` yields `march.ir/`).
+Each conversation file carries both the reconstructed conversation
+(system prompt, tools, turns of typed blocks, per-turn metrics) and the raw
+per-invocation request/response pairs with the provider JSON bodies embedded
+inline. The full schema — every field, the block-type table, the stable-id rule,
+and the versioning policy — is documented in [docs/ir-format.md](docs/ir-format.md).
+
+```bash
+# Emit both the human report and the machine IR from one fetch.
+dressage bedrock --bucket my-bedrock-logs \
+  --start 2026-05-01 --end 2026-05-31 \
+  --format both --output may-report.html      # IR -> ./may-report.ir/
+```
+
+> The IR contains full prompts and tool I/O verbatim (the same content the HTML
+> report exposes). v1 performs no redaction; treat IR directories as sensitive.
 
 ## Report Structure
 

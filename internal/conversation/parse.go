@@ -56,8 +56,8 @@ type apiTool struct {
 }
 
 // extractSessionAnthropic parses an Anthropic Messages API request body and
-// returns the session UUID if present. The session ID is extracted from
-// metadata.user_id which has the format: user_{hash}_account__session_{uuid}
+// returns the session UUID if present, extracted from metadata.user_id (see
+// sessionFromID for the supported encodings).
 func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if len(inputBody) == 0 {
 		return ""
@@ -70,13 +70,36 @@ func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if err := json.Unmarshal(inputBody, &req); err != nil {
 		return ""
 	}
-	return sessionSuffix(req.Metadata.UserID)
+	return sessionFromID(req.Metadata.UserID)
+}
+
+// sessionFromID extracts a Claude Code session id from a metadata.user_id (or
+// OpenAI `user`) value, supporting both encodings seen in the wild:
+//   - a JSON object carrying a "session_id" field, e.g.
+//     {"device_id":"...","account_uuid":"...","session_id":"<uuid>"} (current)
+//   - the legacy user_{hash}_account__session_{uuid} string form
+//
+// It returns "" when neither yields a session id. Shared by the Anthropic and
+// OpenAI session-extraction paths.
+func sessionFromID(s string) string {
+	if s == "" {
+		return ""
+	}
+	// Current encoding: a JSON object with a session_id field.
+	var obj struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(s), &obj); err == nil && obj.SessionID != "" {
+		return obj.SessionID
+	}
+	// Legacy encoding: the "_session_" marker suffix.
+	return sessionSuffix(s)
 }
 
 // sessionSuffix extracts the session UUID that follows the "_session_" marker
-// in an identity string of the form user_{hash}_account__session_{uuid} (as set
-// by Claude Code). It returns "" when the marker is absent. Shared by the
-// Anthropic and OpenAI session-extraction paths.
+// in an identity string of the form user_{hash}_account__session_{uuid} (an
+// older Claude Code encoding). It returns "" when the marker is absent. Used by
+// sessionFromID and by the Gemini systemInstruction session extraction.
 func sessionSuffix(s string) string {
 	const prefix = "_session_"
 	if idx := strings.Index(s, prefix); idx >= 0 {
@@ -224,7 +247,7 @@ func parseRequest(body json.RawMessage) *messagesAPIRequest {
 }
 
 func extractSessionFromReq(req *messagesAPIRequest) string {
-	return sessionSuffix(req.Metadata.UserID)
+	return sessionFromID(req.Metadata.UserID)
 }
 
 // extractSystemPrompt handles both string and array formats for the system field.

@@ -16,9 +16,19 @@ func TestExtractSessionID(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "valid session ID",
+			name:  "valid session ID (legacy _session_ suffix)",
 			input: `{"metadata":{"user_id":"user_abc123_account__session_99bfe2b8-362c-41fc-be2b-a9e707c1e9c7"}}`,
 			want:  "99bfe2b8-362c-41fc-be2b-a9e707c1e9c7",
+		},
+		{
+			name:  "json object user_id with session_id (current encoding)",
+			input: `{"metadata":{"user_id":"{\"device_id\":\"d1\",\"account_uuid\":\"\",\"session_id\":\"72a86c1d-8b6c-4de2-9583-d294f804d75e\"}"}}`,
+			want:  "72a86c1d-8b6c-4de2-9583-d294f804d75e",
+		},
+		{
+			name:  "json object user_id with empty session_id",
+			input: `{"metadata":{"user_id":"{\"device_id\":\"d1\",\"session_id\":\"\"}"}}`,
+			want:  "",
 		},
 		{
 			name:  "no metadata",

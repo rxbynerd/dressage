@@ -411,13 +411,13 @@ func contentText(content json.RawMessage) string {
 	return string(content)
 }
 
-// extractSessionFromUser applies the shared _session_ suffix extraction to the
+// extractSessionFromUser applies the shared session-id extraction to the
 // top-level `user` field, falling back to metadata.user_id.
 func extractSessionFromUser(user, metadataUserID string) string {
-	if sid := sessionSuffix(user); sid != "" {
+	if sid := sessionFromID(user); sid != "" {
 		return sid
 	}
-	return sessionSuffix(metadataUserID)
+	return sessionFromID(metadataUserID)
 }
 
 // extractSessionOpenAI parses an OpenAI request body and returns the session id

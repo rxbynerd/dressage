@@ -16,6 +16,9 @@ internal/
   model/
     log.go                 - Go types mapping to the Bedrock invocation log JSON schema
     summary.go             - Report/summary data types for template rendering
+  rawfetch/
+    rawfetch.go            - Local raw Claude API body ingestion: dir walk, mtime windowing, concurrent parse
+    parse.go               - Request/response decoding, previous_message_id pairing, record building
   s3fetch/
     fetch.go               - S3 listing, download, gzip decompression, NDJSON parsing
   summary/
@@ -39,3 +42,5 @@ internal/
 - **NDJSON parsing**: Bedrock S3 logs are newline-delimited JSON in gzipped files. Scanner buffer is set to 10MB to handle large log lines.
 - **No streaming**: Logs are loaded entirely into memory. This is fine for typical analysis volumes (days/weeks of logs) but would need rethinking for months of high-volume data.
 - **json.RawMessage for bodies**: Input/output JSON bodies vary by model and API operation, so they're stored as raw JSON and pretty-printed at render time.
+- **Raw Claude bodies (rawfetch)**: The `claude` subcommand reads local `~/.claude/raw-api-bodies` files. Request/response filenames share no key, so a request is paired to its response via the `diagnostics.previous_message_id` chain (turn i's response = turn i+1's `previous_message_id`), with an mtime fallback for each session's terminal turn. Timestamps come from file mtime (bodies carry none). Session id is read from the JSON-object `metadata.user_id`. These captures are huge and Claude Code resends the full transcript each turn, so scope with `--start`/`--end`.
+- **Rendered body cap**: `summary.renderBody` truncates each raw-invocation body embedded in the report to `maxRenderedBodyBytes` (32 KiB) with a marker. This is a defensive cap for the resend-full-transcript pattern (which would otherwise produce multi-GB reports); reconstruction is unaffected because it reads the raw JSON, not the rendered string.

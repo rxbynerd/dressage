@@ -10,6 +10,7 @@ Analyze hosted LLM model invocation logs to investigate opportunities for develo
 | Azure OpenAI (Log Analytics) | Supported | `dressage azure` | [docs/providers/azure.md](docs/providers/azure.md) |
 | Azure OpenAI (Storage account) | Supported | `dressage azure-storage` | [docs/providers/azure.md](docs/providers/azure.md#storage-account-destination) |
 | Vertex AI / Gemini (BigQuery) | Supported | `dressage vertex` | [docs/providers/vertex.md](docs/providers/vertex.md) |
+| Claude API (raw bodies, local) | Supported | `dressage claude` | [docs/providers/claude.md](docs/providers/claude.md) |
 
 ## Prerequisites
 
@@ -41,6 +42,7 @@ dressage bedrock --bucket my-bedrock-logs [flags]
 dressage azure --workspace <log-analytics-workspace-id> [flags]
 dressage azure-storage --account <storage-account-name> [flags]
 dressage vertex --project <gcp-project> --dataset <ds> --table <table> [flags]
+dressage claude [--dir ~/.claude/raw-api-bodies] [flags]
 ```
 
 ### Flags
@@ -96,6 +98,18 @@ Gemini invocations are reconstructed into full conversations; Claude-on-Vertex
 invocations contribute to summary stats but are not yet reconstructed (tracked
 in [#4](https://github.com/rxbynerd/dressage/issues/4)).
 
+The `claude` subcommand reconstructs conversations from raw Anthropic Messages
+API request/response bodies captured on the local filesystem (as written by
+Claude Code under `~/.claude/raw-api-bodies`). It needs no cloud credentials and
+adds a single flag:
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `--dir` | No | `~/.claude/raw-api-bodies` | Directory of captured request/response bodies |
+
+This capture can be very large; always scope with `--start`/`--end` (a single day
+is a good working unit). See [docs/providers/claude.md](docs/providers/claude.md).
+
 ### Examples
 
 ```bash
@@ -121,6 +135,9 @@ dressage azure-storage --account mydiaglogs --start 2025-03-01 --end 2025-03-15
 # Analyze Vertex AI / Gemini logs from a BigQuery dataset
 dressage vertex --project my-gcp-project --dataset vertex_logging \
   --table request_response_logging --start 2025-03-01 --end 2025-03-15
+
+# Analyze one day of raw Claude API bodies captured locally by Claude Code
+dressage claude --start 2025-03-01 --end 2025-03-01
 ```
 
 See [docs/providers/bedrock.md](docs/providers/bedrock.md) for how Bedrock

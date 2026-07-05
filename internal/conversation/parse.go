@@ -58,7 +58,29 @@ func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if err := json.Unmarshal(inputBody, &req); err != nil {
 		return ""
 	}
-	return sessionSuffix(req.Metadata.UserID)
+	return sessionFromUserID(req.Metadata.UserID)
+}
+
+// sessionFromUserID extracts the Claude Code session UUID from a Messages API
+// metadata.user_id value. Claude Code has shipped two encodings of this field:
+//
+//   - A JSON object, e.g. {"device_id":"...","account_uuid":"...","session_id":
+//     "<uuid>"}, as written by the direct Anthropic API path (raw-api-bodies).
+//   - A flat identity string of the form user_{hash}_account__session_{uuid}, as
+//     seen on the Bedrock/Vertex hosted paths.
+//
+// It tries the JSON form first (when the value looks like an object) and falls
+// back to the "_session_" suffix, returning "" when neither yields a session id.
+func sessionFromUserID(userID string) string {
+	if trimmed := strings.TrimSpace(userID); strings.HasPrefix(trimmed, "{") {
+		var blob struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := json.Unmarshal([]byte(trimmed), &blob); err == nil && blob.SessionID != "" {
+			return blob.SessionID
+		}
+	}
+	return sessionSuffix(userID)
 }
 
 // sessionSuffix extracts the session UUID that follows the "_session_" marker
@@ -212,7 +234,7 @@ func parseRequest(body json.RawMessage) *messagesAPIRequest {
 }
 
 func extractSessionFromReq(req *messagesAPIRequest) string {
-	return sessionSuffix(req.Metadata.UserID)
+	return sessionFromUserID(req.Metadata.UserID)
 }
 
 // extractSystemPrompt handles both string and array formats for the system field.

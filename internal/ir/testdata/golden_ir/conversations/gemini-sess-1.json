@@ -1,0 +1,153 @@
+{
+  "schema_version": "dressage.ir/1.0",
+  "id": "gemini-sess-1",
+  "display_id": "conv-20240115-2",
+  "session_id": "gemini-sess-1",
+  "provider": "vertex",
+  "model_id": "gemini-2.0-flash",
+  "identity": {
+    "principal": "sa@project.iam.gserviceaccount.com"
+  },
+  "start_time": "2024-01-15T10:02:00Z",
+  "end_time": "2024-01-15T10:02:00Z",
+  "stats": {
+    "invocation_count": 1,
+    "input_tokens": 15,
+    "output_tokens": 3,
+    "cache_read_tokens": 0,
+    "cache_write_tokens": 0,
+    "error_count": 0
+  },
+  "conversation": {
+    "system_prompt": "You are vision-capable._session_gemini-sess-1",
+    "tools": [
+      {
+        "name": "describe",
+        "description": "describes an image",
+        "input_schema": {
+          "type": "object"
+        }
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "blocks": [
+          {
+            "type": "media",
+            "mime_type": "image/png",
+            "inline": true,
+            "byte_size": 5
+          },
+          {
+            "type": "text",
+            "text": "What is in this image?"
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "A greeting."
+          }
+        ],
+        "metrics": {
+          "timestamp": "2024-01-15T10:02:00Z",
+          "request_id": "req-gemini-1",
+          "model_id": "gemini-2.0-flash",
+          "input_tokens": 15,
+          "output_tokens": 3,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0,
+          "latency_ms": 600,
+          "first_byte_ms": 0,
+          "stop_reason": "STOP"
+        }
+      }
+    ]
+  },
+  "invocations": [
+    {
+      "timestamp": "2024-01-15T10:02:00Z",
+      "request_id": "req-gemini-1",
+      "model_id": "gemini-2.0-flash",
+      "operation": "generateContent",
+      "status": "200",
+      "identity": {
+        "principal": "sa@project.iam.gserviceaccount.com"
+      },
+      "latency_ms": 600,
+      "input": {
+        "content_type": "application/json",
+        "token_count": 15,
+        "cache_read": 0,
+        "cache_write": 0,
+        "json": {
+          "systemInstruction": {
+            "parts": [
+              {
+                "text": "You are vision-capable._session_gemini-sess-1"
+              }
+            ]
+          },
+          "contents": [
+            {
+              "role": "user",
+              "parts": [
+                {
+                  "inlineData": {
+                    "mimeType": "image/png",
+                    "data": "aGVsbG8="
+                  }
+                },
+                {
+                  "text": "What is in this image?"
+                }
+              ]
+            }
+          ],
+          "tools": [
+            {
+              "functionDeclarations": [
+                {
+                  "name": "describe",
+                  "description": "describes an image",
+                  "parameters": {
+                    "type": "object"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "output": {
+        "content_type": "application/json",
+        "token_count": 3,
+        "cache_read": 0,
+        "cache_write": 0,
+        "json": {
+          "candidates": [
+            {
+              "content": {
+                "role": "model",
+                "parts": [
+                  {
+                    "text": "A greeting."
+                  }
+                ]
+              },
+              "finishReason": "STOP"
+            }
+          ],
+          "usageMetadata": {
+            "promptTokenCount": 15,
+            "candidatesTokenCount": 3
+          }
+        }
+      }
+    }
+  ]
+}

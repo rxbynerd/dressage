@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"encoding/json"
-	"fmt"
 	"sort"
 
 	"github.com/rxbynerd/dressage/internal/model"
@@ -57,6 +56,7 @@ type geminiFunctionResp struct {
 
 type geminiInlineData struct {
 	MimeType string `json:"mimeType"`
+	Data     string `json:"data"` // base64-encoded bytes (kept only in the raw body)
 }
 
 type geminiFileData struct {
@@ -69,8 +69,9 @@ type geminiTool struct {
 }
 
 type geminiFunctionDecl struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Parameters  json.RawMessage `json:"parameters"`
 }
 
 // geminiResponse is the subset of a GenerateContentResponse Dressage reads.
@@ -235,17 +236,18 @@ func geminiSystemPrompt(si *geminiContent) string {
 	return joinNonEmpty(sb, "\n\n")
 }
 
-// geminiTools maps tools[].functionDeclarations to model.ToolDef, truncating long
-// descriptions for display (matching the other reconstructors).
+// geminiTools maps tools[].functionDeclarations to model.ToolDef, carrying the
+// full description and the parameters schema verbatim. Descriptions are NOT
+// truncated here: truncation is a presentation concern handled at render time.
 func geminiTools(tools []geminiTool) []model.ToolDef {
 	var result []model.ToolDef
 	for _, t := range tools {
 		for _, fd := range t.FunctionDeclarations {
-			desc := fd.Description
-			if len(desc) > 200 {
-				desc = desc[:200] + "..."
-			}
-			result = append(result, model.ToolDef{Name: fd.Name, Description: desc})
+			result = append(result, model.ToolDef{
+				Name:        fd.Name,
+				Description: fd.Description,
+				InputSchema: fd.Parameters,
+			})
 		}
 	}
 	return result
@@ -306,9 +308,9 @@ func partsToBlocks(parts []geminiPart) []model.ContentBlock {
 				ResultContent: prettyJSON(p.FunctionResponse.Response),
 			})
 		case p.InlineData != nil:
-			appendBlock(model.ContentBlock{Type: "text", Text: inlineDataPlaceholder(p.InlineData)})
+			appendBlock(inlineDataBlock(p.InlineData))
 		case p.FileData != nil:
-			appendBlock(model.ContentBlock{Type: "text", Text: fileDataPlaceholder(p.FileData)})
+			appendBlock(fileDataBlock(p.FileData))
 		case p.Thought:
 			// A thinking part is a text part flagged thought:true.
 			appendText("thinking", p.Text)
@@ -319,26 +321,25 @@ func partsToBlocks(parts []geminiPart) []model.ContentBlock {
 	return blocks
 }
 
-// inlineDataPlaceholder renders a non-text inline part as a labeled text block.
-// Dressage's ContentBlock taxonomy has no media type yet (planned), so inline
-// images/audio/PDFs are surfaced as a placeholder rather than dropped.
-func inlineDataPlaceholder(d *geminiInlineData) string {
-	if d.MimeType != "" {
-		return fmt.Sprintf("[inline data: %s]", d.MimeType)
+// inlineDataBlock builds a "media" content block from a Gemini inlineData part.
+// The bytes themselves stay in the raw body; only the MIME type and the decoded
+// byte length are recorded here.
+func inlineDataBlock(d *geminiInlineData) model.ContentBlock {
+	return model.ContentBlock{
+		Type:        "media",
+		MimeType:    d.MimeType,
+		MediaInline: true,
+		MediaBytes:  base64DecodedLen(d.Data),
 	}
-	return "[inline data]"
 }
 
-func fileDataPlaceholder(d *geminiFileData) string {
-	switch {
-	case d.FileURI != "" && d.MimeType != "":
-		return fmt.Sprintf("[file: %s (%s)]", d.FileURI, d.MimeType)
-	case d.FileURI != "":
-		return fmt.Sprintf("[file: %s]", d.FileURI)
-	case d.MimeType != "":
-		return fmt.Sprintf("[file: %s]", d.MimeType)
-	default:
-		return "[file]"
+// fileDataBlock builds a "media" content block from a Gemini fileData part, which
+// references external media (e.g. a gs:// URI) rather than inlining bytes.
+func fileDataBlock(d *geminiFileData) model.ContentBlock {
+	return model.ContentBlock{
+		Type:     "media",
+		MimeType: d.MimeType,
+		FileURI:  d.FileURI,
 	}
 }
 

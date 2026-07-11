@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,9 +16,19 @@ func TestExtractSessionID(t *testing.T) {
 		want  string
 	}{
 		{
-			name:  "valid session ID",
+			name:  "valid session ID (legacy _session_ suffix)",
 			input: `{"metadata":{"user_id":"user_abc123_account__session_99bfe2b8-362c-41fc-be2b-a9e707c1e9c7"}}`,
 			want:  "99bfe2b8-362c-41fc-be2b-a9e707c1e9c7",
+		},
+		{
+			name:  "json object user_id with session_id (current encoding)",
+			input: `{"metadata":{"user_id":"{\"device_id\":\"d1\",\"account_uuid\":\"\",\"session_id\":\"72a86c1d-8b6c-4de2-9583-d294f804d75e\"}"}}`,
+			want:  "72a86c1d-8b6c-4de2-9583-d294f804d75e",
+		},
+		{
+			name:  "json object user_id with empty session_id",
+			input: `{"metadata":{"user_id":"{\"device_id\":\"d1\",\"session_id\":\"\"}"}}`,
+			want:  "",
 		},
 		{
 			name:  "no metadata",
@@ -440,5 +451,112 @@ func TestReconstructConversation(t *testing.T) {
 	// Check final turn content.
 	if detail.Turns[3].Blocks[0].Text != "The file says: Hello from the file!" {
 		t.Errorf("final turn text = %q", detail.Turns[3].Blocks[0].Text)
+	}
+}
+
+// makeAnthropicRecord builds a bedrock-provider Anthropic record from
+// request/response JSON.
+func makeAnthropicRecord(ts time.Time, reqID, input, output string) model.Record {
+	return model.Record{
+		Provider:  "bedrock",
+		Timestamp: ts,
+		RequestID: reqID,
+		ModelID:   "claude-opus-4-6",
+		Operation: "InvokeModelWithResponseStream",
+		Status:    "200",
+		Input:     model.Body{JSON: json.RawMessage(input)},
+		Output:    model.Body{JSON: json.RawMessage(output)},
+	}
+}
+
+func TestExtractToolsKeepsFullDescriptionAndSchema(t *testing.T) {
+	longDesc := strings.Repeat("y", 250)
+	schema := json.RawMessage(`{"type":"object","properties":{"file_path":{"type":"string"}},"required":["file_path"]}`)
+	input := `{
+		"messages": [{"role": "user", "content": "hi"}],
+		"tools": [{"name": "Read", "description": "` + longDesc + `", "input_schema": ` + string(schema) + `}]
+	}`
+	output := `{"id":"msg_1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"ok"}]}`
+
+	detail := Reconstruct([]model.Record{makeAnthropicRecord(time.Now(), "req-1", input, output)})
+	if detail == nil {
+		t.Fatal("expected non-nil detail")
+	}
+	if len(detail.Tools) != 1 {
+		t.Fatalf("tools = %d, want 1", len(detail.Tools))
+	}
+	// The full (untruncated) description must survive.
+	if detail.Tools[0].Description != longDesc {
+		t.Errorf("description len = %d, want %d (full, untruncated)", len(detail.Tools[0].Description), len(longDesc))
+	}
+	// The input_schema must be captured verbatim as inline JSON.
+	if string(detail.Tools[0].InputSchema) != string(schema) {
+		t.Errorf("InputSchema = %s, want %s", detail.Tools[0].InputSchema, schema)
+	}
+}
+
+func TestConvertContentBlockImageMedia(t *testing.T) {
+	// "aGVsbG8=" is base64 for "hello" (5 bytes).
+	inlineBlock := convertContentBlock(apiContentBlock{
+		Type:   "image",
+		Source: &apiImageSource{Type: "base64", MediaType: "image/png", Data: "aGVsbG8="},
+	})
+	if inlineBlock.Type != "media" {
+		t.Fatalf("inline block Type = %q, want media", inlineBlock.Type)
+	}
+	if inlineBlock.MimeType != "image/png" || !inlineBlock.MediaInline || inlineBlock.MediaBytes != 5 {
+		t.Errorf("inline media block = %+v, want image/png inline 5 bytes", inlineBlock)
+	}
+	if inlineBlock.FileURI != "" {
+		t.Errorf("inline media FileURI = %q, want empty", inlineBlock.FileURI)
+	}
+
+	urlBlock := convertContentBlock(apiContentBlock{
+		Type:   "image",
+		Source: &apiImageSource{Type: "url", MediaType: "image/jpeg", URL: "https://example.com/cat.jpg"},
+	})
+	if urlBlock.Type != "media" {
+		t.Fatalf("url block Type = %q, want media", urlBlock.Type)
+	}
+	if urlBlock.FileURI != "https://example.com/cat.jpg" || urlBlock.MediaInline {
+		t.Errorf("url media block = %+v, want external reference", urlBlock)
+	}
+}
+
+func TestImageSourceBlockUnknownType(t *testing.T) {
+	// An unrecognized source type still produces a media block, inferring inline
+	// vs external from whichever of URL/Data is populated.
+	withData := imageSourceBlock(&apiImageSource{Type: "future-kind", MediaType: "image/webp", Data: "aGVsbG8="})
+	if withData.Type != "media" || !withData.MediaInline || withData.MediaBytes != 5 {
+		t.Errorf("unknown-type with data = %+v, want inline media of 5 bytes", withData)
+	}
+
+	withURL := imageSourceBlock(&apiImageSource{Type: "future-kind", MediaType: "image/webp", URL: "https://example.com/x.webp"})
+	if withURL.Type != "media" || withURL.FileURI != "https://example.com/x.webp" || withURL.MediaInline {
+		t.Errorf("unknown-type with url = %+v, want external media", withURL)
+	}
+
+	// A nil source yields an empty media block rather than panicking.
+	if got := imageSourceBlock(nil); got.Type != "media" {
+		t.Errorf("nil source block = %+v, want empty media block", got)
+	}
+}
+
+func TestBase64DecodedLen(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int64
+	}{
+		{"", 0},
+		{"aGVsbG8=", 5},     // "hello", one pad
+		{"iVBORw0KGgo=", 8}, // 12 chars, one pad
+		{"YWJjZA==", 4},     // "abcd", two pads
+		{"YWJj", 3},         // "abc", no pad
+		{"YWJjZGVmZ2g=", 8}, // "abcdefgh"-ish, one pad
+	}
+	for _, c := range cases {
+		if got := base64DecodedLen(c.in); got != c.want {
+			t.Errorf("base64DecodedLen(%q) = %d, want %d", c.in, got, c.want)
+		}
 	}
 }

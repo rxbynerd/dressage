@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/rxbynerd/dressage/internal/azurefetch"
 	"github.com/rxbynerd/dressage/internal/fetch"
+	"github.com/rxbynerd/dressage/internal/ir"
 	"github.com/rxbynerd/dressage/internal/rawfetch"
 	"github.com/rxbynerd/dressage/internal/report"
 	"github.com/rxbynerd/dressage/internal/s3fetch"
@@ -32,9 +34,15 @@ type commonFlags struct {
 	start  string
 	end    string
 	output string
+	format string // output format: "html", "ir", or "both"
+	irDir  string // IR output directory (defaults to --output with its extension replaced by .ir)
 }
 
 func main() {
+	// Stamp the IR exporter's tool version from the build-time version so the
+	// manifest records the producing tool accurately.
+	ir.Version = version
+
 	var common commonFlags
 	root := newRootCommand(&common)
 	root.AddCommand(newBedrockCommand(&common))
@@ -71,6 +79,8 @@ Choose a provider subcommand (e.g. "dressage bedrock") to ingest logs.`,
 	pf.StringVar(&common.start, "start", "", "Start date filter (YYYY-MM-DD)")
 	pf.StringVar(&common.end, "end", "", "End date filter (YYYY-MM-DD)")
 	pf.StringVar(&common.output, "output", "report.html", "Output HTML file path")
+	pf.StringVar(&common.format, "format", "html", "Output format: html, ir, or both")
+	pf.StringVar(&common.irDir, "ir-dir", "", "IR output directory (default: --output with its extension replaced by .ir)")
 
 	return root
 }
@@ -108,7 +118,7 @@ func newBedrockCommand(common *commonFlags) *cobra.Command {
 			log.Println("Fetching Bedrock invocation logs from S3...")
 			fetcher := s3fetch.New(s3Client, bucket, prefix)
 
-			return runReport(cmd.Context(), fetcher, "Bedrock Invocation Log Report", common)
+			return runReport(cmd.Context(), fetcher, "Bedrock Invocation Log Report", "bedrock", common)
 		},
 	}
 
@@ -155,7 +165,7 @@ func newAzureCommand(common *commonFlags) *cobra.Command {
 				return fmt.Errorf("creating Azure fetcher: %w", err)
 			}
 
-			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", common)
+			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", "azure", common)
 		},
 	}
 
@@ -203,7 +213,7 @@ func newAzureStorageCommand(common *commonFlags) *cobra.Command {
 				return fmt.Errorf("creating Azure storage fetcher: %w", err)
 			}
 
-			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", common)
+			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", "azure", common)
 		},
 	}
 
@@ -245,7 +255,7 @@ func newVertexCommand(common *commonFlags) *cobra.Command {
 			log.Println("Querying Vertex AI invocation logs from BigQuery...")
 			fetcher := vertexfetch.New(client, project, dataset, table, location)
 
-			return runReport(cmd.Context(), fetcher, "Vertex AI Invocation Log Report", common)
+			return runReport(cmd.Context(), fetcher, "Vertex AI Invocation Log Report", "vertex", common)
 		},
 	}
 
@@ -282,7 +292,7 @@ func newClaudeCommand(common *commonFlags) *cobra.Command {
 			log.Printf("Reading raw Claude API bodies from %s...", dir)
 			fetcher := rawfetch.New(dir)
 
-			return runReport(cmd.Context(), fetcher, "Claude API Invocation Log Report", common)
+			return runReport(cmd.Context(), fetcher, "Claude API Invocation Log Report", "claude", common)
 		},
 	}
 
@@ -303,9 +313,19 @@ func defaultRawBodiesDir() string {
 }
 
 // runReport is the shared pipeline tail: it parses the common date filters,
-// fetches normalized records via the provider Fetcher, summarizes them, renders
-// the report, and prints a summary block to stdout.
-func runReport(ctx context.Context, fetcher fetch.Fetcher, title string, common *commonFlags) error {
+// fetches normalized records via the provider Fetcher, summarizes them, writes
+// the requested output(s) — the HTML report, the machine-readable IR, or both —
+// and prints a summary block to stdout. provider identifies the active
+// subcommand, recorded in the IR manifest's source metadata.
+func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider string, common *commonFlags) error {
+	// Validate the output format before doing any fetching.
+	format := common.format
+	switch format {
+	case "html", "ir", "both":
+	default:
+		return fmt.Errorf("invalid --format %q: expected one of html, ir, both", format)
+	}
+
 	// Parse date filters.
 	var startDate, endDate time.Time
 	var err error
@@ -339,27 +359,100 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title string, common 
 	rpt := summary.Summarize(records)
 	rpt.Title = title
 
-	// Generate report.
-	log.Printf("Generating report to %s...", common.output)
-	if err := report.Generate(rpt, common.output); err != nil {
-		return fmt.Errorf("generating report: %w", err)
+	// Generate the HTML report unless the format is IR-only.
+	if format == "html" || format == "both" {
+		log.Printf("Generating report to %s...", common.output)
+		if err := report.Generate(rpt, common.output); err != nil {
+			return fmt.Errorf("generating report: %w", err)
+		}
+	}
+
+	// Export the IR directory when requested.
+	var irDir string
+	if format == "ir" || format == "both" {
+		irDir = resolveIRDir(common)
+		src := ir.SourceInfo{
+			Provider: provider,
+			Command:  commandString(),
+			DateRange: ir.ManifestDateRng{
+				Start: common.start,
+				End:   common.end,
+			},
+		}
+		log.Printf("Exporting IR to %s...", irDir)
+		if err := ir.Export(rpt, irDir, src); err != nil {
+			return fmt.Errorf("exporting IR: %w", err)
+		}
 	}
 
 	// Print summary to stdout.
 	fmt.Println()
-	fmt.Printf("Report written to %s\n", common.output)
+	if format == "html" || format == "both" {
+		fmt.Printf("Report written to %s\n", common.output)
+	}
+	if irDir != "" {
+		fmt.Printf("IR written to %s (%d conversation file(s))\n", irDir, ir.ConversationCount(rpt))
+	}
 	fmt.Printf("  Date range:   %s to %s\n", rpt.DateRange.Start.Format(dateFormat), rpt.DateRange.End.Format(dateFormat))
 	fmt.Printf("  Invocations:  %d\n", rpt.TotalStats.InvocationCount)
 	fmt.Printf("  Input tokens: %d\n", rpt.TotalStats.InputTokens)
 	fmt.Printf("  Output tokens: %d\n", rpt.TotalStats.OutputTokens)
 	fmt.Printf("  Errors:       %d\n", rpt.TotalStats.ErrorCount)
 	fmt.Printf("  Days:         %d\n", len(rpt.Days))
-	fmt.Printf("  Conversations: ")
-	total := 0
-	for _, d := range rpt.Days {
-		total += len(d.Conversations)
-	}
-	fmt.Printf("%d\n", total)
+	fmt.Printf("  Conversations: %d\n", ir.ConversationCount(rpt))
 
 	return nil
+}
+
+// resolveIRDir returns the IR output directory: the explicit --ir-dir when set,
+// otherwise the --output path with its extension replaced by ".ir" (e.g.
+// report.html -> report.ir). An --output with no extension simply gains ".ir".
+func resolveIRDir(common *commonFlags) string {
+	if common.irDir != "" {
+		return common.irDir
+	}
+	out := common.output
+	ext := filepath.Ext(out)
+	return strings.TrimSuffix(out, ext) + ".ir"
+}
+
+// sensitiveFlags are flags whose values may identify or grant access to a
+// resource (credential paths, account/subscription ids, workspace/tenant
+// GUIDs). Their values are redacted from the command string recorded in the IR
+// manifest, which is the artifact most likely to be shared, archived, or fed to
+// an analysis program.
+var sensitiveFlags = map[string]bool{
+	"--credentials":  true,
+	"--profile":      true,
+	"--subscription": true,
+	"--workspace":    true,
+	"--tenant":       true,
+	"--account":      true,
+}
+
+// commandString reconstructs the invoked command line for the IR manifest's
+// source metadata, so a downstream consumer can see how the IR was produced,
+// with the values of sensitive flags redacted. It handles both the
+// "--flag value" and "--flag=value" spellings.
+func commandString() string {
+	out := make([]string, 0, len(os.Args))
+	redactNext := false
+	for _, a := range os.Args {
+		if redactNext {
+			out = append(out, "<redacted>")
+			redactNext = false
+			continue
+		}
+		// "--flag=value": redact the value, keep the flag name.
+		if eq := strings.IndexByte(a, '='); eq > 0 && sensitiveFlags[a[:eq]] {
+			out = append(out, a[:eq]+"=<redacted>")
+			continue
+		}
+		// "--flag value": redact the following arg.
+		if sensitiveFlags[a] {
+			redactNext = true
+		}
+		out = append(out, a)
+	}
+	return strings.Join(out, " ")
 }

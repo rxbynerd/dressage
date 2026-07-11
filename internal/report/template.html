@@ -337,6 +337,33 @@
     line-height: 1.4;
   }
 
+  .block-media {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    background: var(--amber-light);
+    border: 1px solid var(--amber);
+    border-radius: 4px;
+    margin: 0.25rem 0;
+    padding: 0.4rem 0.6rem;
+    font-size: 0.75rem;
+  }
+  .block-media .media-label {
+    font-family: var(--mono);
+    font-weight: 600;
+    color: var(--amber);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .block-media .media-mime,
+  .block-media .media-uri,
+  .block-media .media-inline {
+    font-family: var(--mono);
+    color: var(--text-muted);
+    word-break: break-all;
+  }
+
   .turn-metrics {
     display: flex;
     gap: 0.75rem;
@@ -539,7 +566,7 @@
               {{range .Detail.Tools}}
               <div class="tool-list-item">
                 <span class="tool-list-name">{{.Name}}</span>
-                <span class="tool-list-desc">{{.Description}}</span>
+                <span class="tool-list-desc">{{truncate .Description 200}}</span>
               </div>
               {{end}}
             </div>
@@ -580,6 +607,13 @@
                   </summary>
                   <div class="result-body">{{.ResultContent}}</div>
                 </details>
+
+              {{else if eq .Type "media"}}
+                <div class="content-block block-media">
+                  <span class="media-label">media</span>
+                  {{if .MimeType}}<span class="media-mime">{{.MimeType}}</span>{{end}}
+                  {{if .FileURI}}<span class="media-uri">{{.FileURI}}</span>{{else if .MediaInline}}<span class="media-inline">inline{{if gt .MediaBytes 0}} &middot; {{formatInt .MediaBytes}} bytes{{end}}</span>{{end}}
+                </div>
 
               {{end}}
             {{end}}

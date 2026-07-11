@@ -36,16 +36,28 @@ type apiContentBlock struct {
 	ToolUseID string          `json:"tool_use_id,omitempty"`
 	Content   json.RawMessage `json:"content,omitempty"` // tool_result content
 	IsError   bool            `json:"is_error,omitempty"`
+	Source    *apiImageSource `json:"source,omitempty"` // image/document source (for "image"/"document")
+}
+
+// apiImageSource is the source of an Anthropic image/document content block:
+// either base64-inlined bytes ({type:"base64", media_type, data}) or a URL
+// reference ({type:"url", url}).
+type apiImageSource struct {
+	Type      string `json:"type"`
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+	URL       string `json:"url"`
 }
 
 type apiTool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
 // extractSessionAnthropic parses an Anthropic Messages API request body and
-// returns the session UUID if present. The session ID is extracted from
-// metadata.user_id which has the format: user_{hash}_account__session_{uuid}
+// returns the session UUID if present, extracted from metadata.user_id (see
+// sessionFromID for the supported encodings).
 func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if len(inputBody) == 0 {
 		return ""
@@ -58,35 +70,36 @@ func extractSessionAnthropic(inputBody json.RawMessage) string {
 	if err := json.Unmarshal(inputBody, &req); err != nil {
 		return ""
 	}
-	return sessionFromUserID(req.Metadata.UserID)
+	return sessionFromID(req.Metadata.UserID)
 }
 
-// sessionFromUserID extracts the Claude Code session UUID from a Messages API
-// metadata.user_id value. Claude Code has shipped two encodings of this field:
+// sessionFromID extracts a Claude Code session id from a metadata.user_id (or
+// OpenAI `user`) value, supporting both encodings seen in the wild:
+//   - a JSON object carrying a "session_id" field, e.g.
+//     {"device_id":"...","account_uuid":"...","session_id":"<uuid>"} (current)
+//   - the legacy user_{hash}_account__session_{uuid} string form
 //
-//   - A JSON object, e.g. {"device_id":"...","account_uuid":"...","session_id":
-//     "<uuid>"}, as written by the direct Anthropic API path (raw-api-bodies).
-//   - A flat identity string of the form user_{hash}_account__session_{uuid}, as
-//     seen on the Bedrock/Vertex hosted paths.
-//
-// It tries the JSON form first (when the value looks like an object) and falls
-// back to the "_session_" suffix, returning "" when neither yields a session id.
-func sessionFromUserID(userID string) string {
-	if trimmed := strings.TrimSpace(userID); strings.HasPrefix(trimmed, "{") {
-		var blob struct {
-			SessionID string `json:"session_id"`
-		}
-		if err := json.Unmarshal([]byte(trimmed), &blob); err == nil && blob.SessionID != "" {
-			return blob.SessionID
-		}
+// It returns "" when neither yields a session id. Shared by the Anthropic and
+// OpenAI session-extraction paths.
+func sessionFromID(s string) string {
+	if s == "" {
+		return ""
 	}
-	return sessionSuffix(userID)
+	// Current encoding: a JSON object with a session_id field.
+	var obj struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal([]byte(s), &obj); err == nil && obj.SessionID != "" {
+		return obj.SessionID
+	}
+	// Legacy encoding: the "_session_" marker suffix.
+	return sessionSuffix(s)
 }
 
 // sessionSuffix extracts the session UUID that follows the "_session_" marker
-// in an identity string of the form user_{hash}_account__session_{uuid} (as set
-// by Claude Code). It returns "" when the marker is absent. Shared by the
-// Anthropic and OpenAI session-extraction paths.
+// in an identity string of the form user_{hash}_account__session_{uuid} (an
+// older Claude Code encoding). It returns "" when the marker is absent. Used by
+// sessionFromID and by the Gemini systemInstruction session extraction.
 func sessionSuffix(s string) string {
 	const prefix = "_session_"
 	if idx := strings.Index(s, prefix); idx >= 0 {
@@ -234,7 +247,7 @@ func parseRequest(body json.RawMessage) *messagesAPIRequest {
 }
 
 func extractSessionFromReq(req *messagesAPIRequest) string {
-	return sessionFromUserID(req.Metadata.UserID)
+	return sessionFromID(req.Metadata.UserID)
 }
 
 // extractSystemPrompt handles both string and array formats for the system field.
@@ -267,15 +280,17 @@ func extractSystemPrompt(raw json.RawMessage) string {
 	return string(raw)
 }
 
+// extractTools maps Anthropic tools[] to model.ToolDef, carrying the full
+// description and the input_schema verbatim. Descriptions are NOT truncated
+// here: truncation is a presentation concern handled at render time.
 func extractTools(tools []apiTool) []model.ToolDef {
 	result := make([]model.ToolDef, len(tools))
 	for i, t := range tools {
-		desc := t.Description
-		// Truncate long descriptions for display.
-		if len(desc) > 200 {
-			desc = desc[:200] + "..."
+		result[i] = model.ToolDef{
+			Name:        t.Name,
+			Description: t.Description,
+			InputSchema: t.InputSchema,
 		}
-		result[i] = model.ToolDef{Name: t.Name, Description: desc}
 	}
 	return result
 }
@@ -331,9 +346,37 @@ func convertContentBlock(b apiContentBlock) model.ContentBlock {
 			ResultContent: extractToolResultContent(b.Content),
 			IsError:       b.IsError,
 		}
+	case "image", "document":
+		return imageSourceBlock(b.Source)
 	default:
 		return model.ContentBlock{Type: b.Type, Text: string(b.Content)}
 	}
+}
+
+// imageSourceBlock builds a "media" content block from an Anthropic image/document
+// source. A base64 source is inline (bytes stay in the raw body; only the decoded
+// length is recorded); a url source carries the external reference.
+func imageSourceBlock(src *apiImageSource) model.ContentBlock {
+	block := model.ContentBlock{Type: "media"}
+	if src == nil {
+		return block
+	}
+	block.MimeType = src.MediaType
+	switch src.Type {
+	case "url":
+		block.FileURI = src.URL
+	case "base64":
+		block.MediaInline = true
+		block.MediaBytes = base64DecodedLen(src.Data)
+	default:
+		if src.URL != "" {
+			block.FileURI = src.URL
+		} else if src.Data != "" {
+			block.MediaInline = true
+			block.MediaBytes = base64DecodedLen(src.Data)
+		}
+	}
+	return block
 }
 
 // extractToolResultContent handles both string and array formats for tool_result content.
@@ -379,4 +422,19 @@ func prettyJSON(raw json.RawMessage) string {
 		return string(raw)
 	}
 	return string(pretty)
+}
+
+// base64DecodedLen returns the number of bytes a base64 string decodes to,
+// computed arithmetically from the input length so it allocates nothing (the
+// decoded bytes are never needed — only their count, for a media size field).
+// The formula handles both padded (standard) and unpadded (URL-safe data-URI)
+// input; for the latter the result is exact to within ≤2 bytes, acceptable for
+// a size estimate. It returns 0 for the empty string.
+func base64DecodedLen(s string) int64 {
+	if s == "" {
+		return 0
+	}
+	n := int64(len(s))
+	padding := int64(strings.Count(s, "="))
+	return (n*3)/4 - padding
 }

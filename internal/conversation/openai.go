@@ -44,12 +44,13 @@ type openaiFunctionCall struct {
 	Arguments string `json:"arguments"`
 }
 
-// openaiTool is one entry in tools[]: {type:"function", function:{name, description, ...}}.
+// openaiTool is one entry in tools[]: {type:"function", function:{name, description, parameters}}.
 type openaiTool struct {
 	Type     string `json:"type"`
 	Function struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Parameters  json.RawMessage `json:"parameters"`
 	} `json:"function"`
 }
 
@@ -237,19 +238,20 @@ func openaiSystemPrompt(messages []openaiMessage) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// openaiTools maps tools[].function to model.ToolDef, truncating long
-// descriptions for display (matching the Anthropic path).
+// openaiTools maps tools[].function to model.ToolDef, carrying the full
+// description and the function.parameters schema verbatim. Descriptions are NOT
+// truncated here: truncation is a presentation concern handled at render time.
 func openaiTools(tools []openaiTool) []model.ToolDef {
 	if len(tools) == 0 {
 		return nil
 	}
 	result := make([]model.ToolDef, len(tools))
 	for i, t := range tools {
-		desc := t.Function.Description
-		if len(desc) > 200 {
-			desc = desc[:200] + "..."
+		result[i] = model.ToolDef{
+			Name:        t.Function.Name,
+			Description: t.Function.Description,
+			InputSchema: t.Function.Parameters,
 		}
-		result[i] = model.ToolDef{Name: t.Function.Name, Description: desc}
 	}
 	return result
 }
@@ -277,7 +279,7 @@ func openaiTurn(msg openaiMessage) model.Turn {
 
 // userBlocks builds content blocks for a user message: a string becomes one
 // text block; an array becomes a text block per text part, with image parts
-// surfaced as a "[image]" text block rather than dropped silently.
+// surfaced as first-class "media" blocks rather than dropped silently.
 func userBlocks(content json.RawMessage) []model.ContentBlock {
 	if len(content) == 0 {
 		return nil
@@ -298,20 +300,57 @@ func userBlocks(content json.RawMessage) []model.ContentBlock {
 
 	var blocks []model.ContentBlock
 	for _, p := range parts {
-		switch p.Type {
-		case "text":
-			if p.Text != "" {
-				blocks = append(blocks, model.ContentBlock{Type: "text", Text: p.Text})
-			}
-		case "image_url":
-			blocks = append(blocks, model.ContentBlock{Type: "text", Text: "[image]"})
-		default:
-			if p.Text != "" {
-				blocks = append(blocks, model.ContentBlock{Type: "text", Text: p.Text})
-			}
+		switch {
+		case p.Type == "image_url" || p.ImageURL != nil:
+			blocks = append(blocks, openaiImageBlock(p.ImageURL))
+		case p.Text != "":
+			blocks = append(blocks, model.ContentBlock{Type: "text", Text: p.Text})
 		}
 	}
 	return blocks
+}
+
+// openaiImageBlock builds a "media" content block from an OpenAI image_url part.
+// An image_url is either an external URL or an inline "data:" URI; for the
+// latter the bytes stay in the raw body and only the decoded length is recorded.
+func openaiImageBlock(img *struct {
+	URL string `json:"url"`
+}) model.ContentBlock {
+	block := model.ContentBlock{Type: "media"}
+	if img == nil || img.URL == "" {
+		return block
+	}
+	if mime, b64, ok := parseDataURI(img.URL); ok {
+		block.MimeType = mime
+		block.MediaInline = true
+		block.MediaBytes = base64DecodedLen(b64)
+		return block
+	}
+	block.FileURI = img.URL
+	return block
+}
+
+// parseDataURI extracts the MIME type and base64 payload from a data: URI of the
+// form "data:<mime>;base64,<payload>". It returns ok=false for any other string.
+func parseDataURI(s string) (mime, b64 string, ok bool) {
+	const prefix = "data:"
+	if !strings.HasPrefix(s, prefix) {
+		return "", "", false
+	}
+	rest := s[len(prefix):]
+	comma := strings.IndexByte(rest, ',')
+	if comma < 0 {
+		return "", "", false
+	}
+	meta, payload := rest[:comma], rest[comma+1:]
+	if !strings.Contains(meta, "base64") {
+		return "", "", false
+	}
+	mime = meta
+	if semi := strings.IndexByte(meta, ';'); semi >= 0 {
+		mime = meta[:semi]
+	}
+	return mime, payload, true
 }
 
 // assistantBlocks builds content blocks for an assistant message: optional text
@@ -372,13 +411,13 @@ func contentText(content json.RawMessage) string {
 	return string(content)
 }
 
-// extractSessionFromUser applies the shared _session_ suffix extraction to the
+// extractSessionFromUser applies the shared session-id extraction to the
 // top-level `user` field, falling back to metadata.user_id.
 func extractSessionFromUser(user, metadataUserID string) string {
-	if sid := sessionSuffix(user); sid != "" {
+	if sid := sessionFromID(user); sid != "" {
 		return sid
 	}
-	return sessionSuffix(metadataUserID)
+	return sessionFromID(metadataUserID)
 }
 
 // extractSessionOpenAI parses an OpenAI request body and returns the session id

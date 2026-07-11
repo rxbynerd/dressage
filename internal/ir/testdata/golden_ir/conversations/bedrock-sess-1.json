@@ -1,0 +1,144 @@
+{
+  "schema_version": "dressage.ir/1.0",
+  "id": "bedrock-sess-1",
+  "display_id": "conv-20240115-1",
+  "session_id": "bedrock-sess-1",
+  "provider": "bedrock",
+  "model_id": "claude-opus-4-6",
+  "identity": {
+    "principal": "arn:aws:iam::111:user/dev",
+    "extra": {
+      "region": "eu-west-1"
+    }
+  },
+  "start_time": "2024-01-15T10:00:00Z",
+  "end_time": "2024-01-15T10:00:00Z",
+  "stats": {
+    "invocation_count": 1,
+    "input_tokens": 40,
+    "output_tokens": 12,
+    "cache_read_tokens": 10,
+    "cache_write_tokens": 4,
+    "error_count": 0
+  },
+  "conversation": {
+    "system_prompt": "You are a coding assistant.",
+    "tools": [
+      {
+        "name": "Bash",
+        "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "command": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "command"
+          ]
+        }
+      }
+    ],
+    "turns": [
+      {
+        "role": "user",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "List the files."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Here are the files."
+          }
+        ],
+        "metrics": {
+          "timestamp": "2024-01-15T10:00:00Z",
+          "request_id": "req-bedrock-1",
+          "model_id": "claude-opus-4-6",
+          "input_tokens": 40,
+          "output_tokens": 12,
+          "cache_read_tokens": 10,
+          "cache_write_tokens": 4,
+          "latency_ms": 0,
+          "first_byte_ms": 0,
+          "stop_reason": "end_turn"
+        }
+      }
+    ]
+  },
+  "invocations": [
+    {
+      "timestamp": "2024-01-15T10:00:00Z",
+      "request_id": "req-bedrock-1",
+      "model_id": "claude-opus-4-6",
+      "operation": "Converse",
+      "status": "200",
+      "identity": {
+        "principal": "arn:aws:iam::111:user/dev",
+        "extra": {
+          "region": "eu-west-1"
+        }
+      },
+      "latency_ms": 0,
+      "input": {
+        "content_type": "application/json",
+        "token_count": 40,
+        "cache_read": 10,
+        "cache_write": 4,
+        "json": {
+          "metadata": {
+            "user_id": "user_hash_account__session_bedrock-sess-1"
+          },
+          "system": "You are a coding assistant.",
+          "messages": [
+            {
+              "role": "user",
+              "content": "List the files."
+            }
+          ],
+          "tools": [
+            {
+              "name": "Bash",
+              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "command"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "output": {
+        "content_type": "application/json",
+        "token_count": 12,
+        "cache_read": 0,
+        "cache_write": 0,
+        "json": {
+          "id": "msg_b",
+          "role": "assistant",
+          "stop_reason": "end_turn",
+          "content": [
+            {
+              "type": "text",
+              "text": "Here are the files."
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

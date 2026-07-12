@@ -37,16 +37,32 @@ Request and response filenames share no key — requests are named by an opaque
 UUID and responses by the API request id. The bodies are correlated instead
 through the **message-id chain**: each request's
 `diagnostics.previous_message_id` holds the `id` of the *previous* turn's
-response. Ordering a session's requests by growing message count, the response
+response. Ordering a chain's requests by growing message count, the response
 produced by turn *i* is the body named by turn *i+1*'s `previous_message_id`.
 This resolves for very nearly every captured turn.
 
-The **final turn** of a session has no following request pointing back at its
-response, so it cannot be located by id. Those terminal responses are matched by
-write time instead: the earliest not-yet-claimed response of the same model
-written at or just after the request. This heuristic only ever affects the
-single last assistant turn of a session; if no response is found within a short
-window the turn is left unpaired (its content and token counts are omitted).
+A session is not one linear chain: subagent **sidechains** run interleaved with
+the main thread. Requests are therefore first split into chains by a hash of
+their first message — a linear thread's first message is invariant as its
+transcript grows (the opening user prompt for the main thread, the task prompt
+for a subagent) — and pairing runs within each chain. Each chain becomes a
+**thread**: the main thread (the chain that starts earliest) plus one sidechain
+per subagent, and each record carries its thread id (the chain root's request
+uuid). Compaction rewrites the transcript and so starts a new chain whose root
+names the old context's final response; such chains are stitched back into one
+thread, and that final response is paired to the old chain's tip even when the
+session resumed much later.
+
+Each chain's **tip** (its last request) has no successor to name its response,
+so it cannot be located by id. Those terminal responses are matched by write
+time instead: the earliest not-yet-claimed response of the same model written
+at or just after the request. If no response is found within a short window the
+turn is left unpaired (its content and token counts are omitted).
+
+One caveat: two chains whose first messages are byte-identical (e.g. two
+parallel subagents given the exact same prompt) share a chain key and merge;
+pairing inside the merged group falls back to message-count adjacency. Real
+prompts are effectively always distinct.
 
 ## Timestamps
 
@@ -72,20 +88,43 @@ Token counts come from the paired response's `usage` block: `input_tokens`,
 `output_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens`.
 Requests with no paired response (see above) contribute no tokens. Latency and
 first-byte timings are not present in the captured bodies and are not reported.
+The response's `stop_reason` and message id are lifted into the record (they
+appear in the IR facts table).
+
+## Reconstruction and sidechains
+
+The reconstructed conversation view is the **main thread**. Subagent sidechains
+are reconstructed separately, one transcript per chain, and exported in the
+IR's `turns.parquet` with their thread id (they are not rendered in the HTML
+report). On multi-agent workflows sidechains are often the majority of the
+content — on a real capture, ~57% of all deduplicated turns.
 
 ## Scale and memory
 
-This capture can be very large — tens of thousands of files totaling many
-gigabytes — and because Claude Code resends the whole transcript each turn, a
-single busy day can hold gigabytes of request bodies in memory at once. Dressage
-loads matching bodies fully into memory (no streaming), so:
+This capture can be very large — a hundred thousand files totaling tens of
+gigabytes — but Dressage does **not** hold bodies in memory: records carry
+file-backed lazy references, grouping uses metadata only, and conversations
+materialize one at a time during export. Body files are read at export time
+(not snapshot at fetch), so a file deleted mid-run degrades that one body
+rather than failing the run.
 
-- **Always scope with `--start`/`--end`.** Analyzing the entire directory at
-  once is slow and memory-hungry. A single day is a good working unit.
+Measured against a real capture (M-series laptop, local SSD): a busy day of
+7.6k invocations (~1.9 GB of bodies after windowing, drawn from the 25 GB
+directory) exports the IR in ~5 s with ~200 MB peak memory; the **entire
+25 GB / 112k-file capture** exports in one run with ~700 MB peak memory,
+producing a 370 MB IR. Before the lazy-body pipeline a single smaller day
+required ~15.7 GB.
+
+- `--start`/`--end` still bound run time (fewer files to read) and are the
+  natural working unit for the HTML report, which retains every rendered
+  conversation. `--format ir` runs are bounded regardless of window.
 - The self-contained HTML report embeds each invocation's raw body in a "Raw
   Invocations" drill-down. These are capped in size (with a truncation marker) so
   the report stays shareable; the full conversation is always available in the
   reconstructed conversation view above it.
+- The IR omits raw bodies by default (`--raw-bodies embed` restores them; see
+  [docs/ir-format.md](../ir-format.md)) — with embedding on, a resend-style
+  capture's IR grows quadratically with conversation length.
 
 ## Usage
 

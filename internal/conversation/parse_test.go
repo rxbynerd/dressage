@@ -560,3 +560,84 @@ func TestBase64DecodedLen(t *testing.T) {
 		}
 	}
 }
+
+// countingSource is a BodySource test double that counts loads. When hint is
+// false its MessageCount reports unknown, forcing the count fallback path.
+type countingSource struct {
+	data  json.RawMessage
+	loads *int
+	msgs  int
+	hint  bool
+}
+
+func (c countingSource) Load() (json.RawMessage, error) {
+	*c.loads++
+	return c.data, nil
+}
+
+func (c countingSource) MessageCount() (int, bool) {
+	if !c.hint {
+		return 0, false
+	}
+	return c.msgs, true
+}
+
+// TestReconstructLoadCounts asserts the count-first reconstruction's load
+// discipline: with a message-count hint only the fullest request body is ever
+// loaded; without one each request is loaded once for counting plus once more
+// to parse the fullest. Output bodies load transiently, once per invocation
+// that claims a turn.
+func TestReconstructLoadCounts(t *testing.T) {
+	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
+	inv1Input := `{"messages":[{"role":"user","content":"hi"}]}`
+	inv1Output := `{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}`
+	inv2Input := `{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"more"}]}`
+	inv2Output := `{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"sure"}],"stop_reason":"end_turn"}`
+
+	for _, tc := range []struct {
+		name           string
+		hint           bool
+		wantInputLoads int
+	}{
+		{name: "with count hint", hint: true, wantInputLoads: 1},
+		{name: "without hint", hint: false, wantInputLoads: 3}, // 2 counting + 1 full parse of the fullest
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var inputLoads, outputLoads int
+			records := []model.Record{
+				{
+					Provider:  "claude",
+					Timestamp: base,
+					Input:     model.Body{Source: countingSource{data: json.RawMessage(inv1Input), loads: &inputLoads, msgs: 1, hint: tc.hint}},
+					Output:    model.Body{Source: countingSource{data: json.RawMessage(inv1Output), loads: &outputLoads, msgs: -1, hint: false}},
+				},
+				{
+					Provider:  "claude",
+					Timestamp: base.Add(5 * time.Second),
+					Input:     model.Body{Source: countingSource{data: json.RawMessage(inv2Input), loads: &inputLoads, msgs: 3, hint: tc.hint}},
+					Output:    model.Body{Source: countingSource{data: json.RawMessage(inv2Output), loads: &outputLoads, msgs: -1, hint: false}},
+				},
+			}
+
+			detail := Reconstruct(records)
+			if detail == nil {
+				t.Fatal("expected non-nil detail")
+			}
+			if len(detail.Turns) != 4 {
+				t.Fatalf("turns = %d, want 4", len(detail.Turns))
+			}
+			if detail.Turns[1].Metrics == nil {
+				t.Error("turn[1] missing metrics from earlier invocation")
+			}
+			if inputLoads != tc.wantInputLoads {
+				t.Errorf("input loads = %d, want %d", inputLoads, tc.wantInputLoads)
+			}
+			// Both outputs load exactly once: the fullest for the final turn, the
+			// earlier one when its metrics attach to turn 1.
+			if outputLoads != 2 {
+				t.Errorf("output loads = %d, want 2", outputLoads)
+			}
+		})
+	}
+}

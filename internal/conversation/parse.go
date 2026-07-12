@@ -120,10 +120,28 @@ func bodyJSON(b model.Body) json.RawMessage {
 	return raw
 }
 
-// parsedInvocation pairs a record with its parsed Messages API request body.
-type parsedInvocation struct {
-	rec *model.Record
-	req *messagesAPIRequest
+// requestMessageCount returns the number of messages in a request body without
+// materializing it: a lazy source that knows its message count (the claude
+// fetcher records it at index time) is consulted first; otherwise the payload
+// is loaded and only the messages array's length is decoded. 0 means the body
+// is absent, invalid, or message-less — mirroring parseRequest's rejects.
+func requestMessageCount(b model.Body) int {
+	if h, ok := b.Source.(interface{ MessageCount() (int, bool) }); ok {
+		if n, known := h.MessageCount(); known {
+			return n
+		}
+	}
+	raw, err := b.Load()
+	if err != nil || len(raw) == 0 {
+		return 0
+	}
+	var env struct {
+		Messages []struct{} `json:"messages"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return 0
+	}
+	return len(env.Messages)
 }
 
 // reconstructAnthropic builds a ConversationDetail from a set of records
@@ -131,6 +149,11 @@ type parsedInvocation struct {
 // request/response bodies. It finds the invocation with the most messages
 // (the latest main-thread turn), extracts the full conversation history from
 // its input, and appends the final assistant response from its output.
+//
+// Selection is count-first so at most one request body is ever parsed in
+// full: message counts (free for lazy bodies that carry a count hint) pick
+// the fullest invocation and drive metric attachment; peak memory is one
+// transcript, not every request in the conversation.
 func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
 	if len(records) == 0 {
 		return nil
@@ -143,63 +166,71 @@ func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
 		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
 	})
 
-	// Parse all request bodies and find the one with the most messages
-	// (the latest main-thread invocation).
-	var all []parsedInvocation
-	bestIdx := -1
-
+	// Count each request's messages, then try candidates fullest-first (ties:
+	// earliest timestamp) so the fullest parseable request wins even if a
+	// fuller body fails to load or parse.
+	counts := make([]int, len(sorted))
+	candidates := make([]int, 0, len(sorted))
 	for i := range sorted {
-		req := parseRequest(bodyJSON(sorted[i].Input))
-		if req == nil {
-			continue
-		}
-		all = append(all, parsedInvocation{rec: &sorted[i], req: req})
-		if bestIdx < 0 || len(req.Messages) > len(all[bestIdx].req.Messages) {
-			bestIdx = len(all) - 1
+		counts[i] = requestMessageCount(sorted[i].Input)
+		if counts[i] > 0 {
+			candidates = append(candidates, i)
 		}
 	}
+	sort.SliceStable(candidates, func(a, b int) bool {
+		return counts[candidates[a]] > counts[candidates[b]]
+	})
 
-	if bestIdx < 0 {
+	var best *model.Record
+	var bestReq *messagesAPIRequest
+	for _, i := range candidates {
+		if req := parseRequest(bodyJSON(sorted[i].Input)); req != nil {
+			best, bestReq = &sorted[i], req
+			break
+		}
+	}
+	if bestReq == nil {
 		return nil
 	}
-	// Resolve the pointer AFTER the loop so it does not alias into a slice that
-	// may have been reallocated by append.
-	best := &all[bestIdx]
 
 	detail := &model.ConversationDetail{
-		SessionID:    extractSessionFromReq(best.req),
-		SystemPrompt: extractSystemPrompt(best.req.System),
-		Tools:        extractTools(best.req.Tools),
+		SessionID:    extractSessionFromReq(bestReq),
+		SystemPrompt: extractSystemPrompt(bestReq.System),
+		Tools:        extractTools(bestReq.Tools),
 	}
 
 	// Convert all messages from the input into turns.
-	for _, msg := range best.req.Messages {
+	for _, msg := range bestReq.Messages {
 		turn := convertMessage(msg)
 		detail.Turns = append(detail.Turns, turn)
 	}
 
 	// Reassemble the final assistant response from the output body.
-	bestOutput := bodyJSON(best.rec.Output)
+	bestOutput := bodyJSON(best.Output)
 	finalTurn := reassembleOutput(bestOutput)
 	if finalTurn != nil {
-		finalTurn.Metrics = extractMetricsFromLog(best.rec, bestOutput)
+		finalTurn.Metrics = extractMetricsFromLog(best, bestOutput)
 		detail.Turns = append(detail.Turns, *finalTurn)
 	}
 
 	// Attach metrics to earlier assistant turns by matching invocations
 	// to the turns they produced. Invocation with N input messages produced
 	// the assistant turn at index N in the conversation.
-	attachMetrics(detail, all)
+	attachMetrics(detail, sorted, counts)
 
 	return detail
 }
 
 // attachMetrics correlates invocations with assistant turns and attaches
 // per-invocation metrics. An invocation with N input messages produced the
-// assistant turn at message index N.
-func attachMetrics(detail *model.ConversationDetail, invocations []parsedInvocation) {
-	for _, p := range invocations {
-		turnIdx := len(p.req.Messages)
+// assistant turn at message index N. Output bodies are loaded transiently and
+// only for invocations that actually claim a turn.
+func attachMetrics(detail *model.ConversationDetail, records []model.Record, counts []int) {
+	for i := range records {
+		turnIdx := counts[i]
+		if turnIdx == 0 {
+			continue // absent or invalid request body
+		}
 		if turnIdx >= len(detail.Turns) {
 			continue // this is the final invocation, already handled
 		}
@@ -210,7 +241,7 @@ func attachMetrics(detail *model.ConversationDetail, invocations []parsedInvocat
 		if turn.Metrics != nil {
 			continue // already has metrics
 		}
-		turn.Metrics = extractMetricsFromLog(p.rec, bodyJSON(p.rec.Output))
+		turn.Metrics = extractMetricsFromLog(&records[i], bodyJSON(records[i].Output))
 	}
 }
 

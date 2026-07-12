@@ -14,6 +14,14 @@ type ConversationDetail struct {
 	Turns        []Turn
 }
 
+// Thread is one reconstructed sidechain of a conversation: a linear request
+// chain within the same session (e.g. a subagent dispatched by the main
+// thread) with its own transcript.
+type Thread struct {
+	ID     string // provider-assigned thread id (the chain root's request uuid)
+	Detail *ConversationDetail
+}
+
 // Turn is a single message in a conversation (user or assistant).
 type Turn struct {
 	Role    string         // "user" or "assistant"

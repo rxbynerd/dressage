@@ -51,7 +51,8 @@ type ConversationSummary struct {
 	OutputTokens int64
 	ErrorCount   int
 	Invocations  []Invocation
-	Detail       *ConversationDetail // reconstructed conversation (nil if not available)
+	Detail       *ConversationDetail // reconstructed main-thread conversation (nil if not available)
+	Sidechains   []Thread            // reconstructed sidechain threads (subagents); empty when none or when Detail is nil
 }
 
 // Invocation is a single request/response pair. It carries both a display copy

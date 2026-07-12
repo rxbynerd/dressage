@@ -140,10 +140,11 @@ func (p *Plan) Conversations(opts MaterializeOptions) iter.Seq[*model.Conversati
 			cs := buildConversationSummary(cp.id, cp.records, opts.RenderBodies)
 			if cp.sessionID != "" {
 				cs.SessionID = cp.sessionID
-				if detail := conversation.Reconstruct(cp.records); detail != nil {
+				if detail, sidechains := conversation.ReconstructThreads(cp.records); detail != nil {
 					cs.Detail = detail
-					log.Printf("Reconstructed conversation %s: %d turns, session %s",
-						cp.id, len(detail.Turns), shortID(cp.sessionID))
+					cs.Sidechains = sidechains
+					log.Printf("Reconstructed conversation %s: %d turns, %d sidechains, session %s",
+						cp.id, len(detail.Turns), len(sidechains), shortID(cp.sessionID))
 				}
 			}
 			if opts.Retain {

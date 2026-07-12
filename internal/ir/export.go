@@ -52,17 +52,29 @@ type Exporter struct {
 	opts      ExportOptions
 	usedNames map[string]int
 	facts     []FactRow
+
+	// The turns table is written incrementally — turn rows carry content, so
+	// buffering a whole run's worth would defeat the bounded-memory design.
+	turnsFile   *os.File
+	turnsWriter *parquet.GenericWriter[TurnRow]
 }
 
-// NewExporter prepares dir for an export, creating the directory layout.
+// NewExporter prepares dir for an export, creating the directory layout and
+// opening the incrementally-written turns table.
 func NewExporter(dir string, src SourceInfo, generatedAt time.Time, opts ExportOptions) (*Exporter, error) {
 	convDir := filepath.Join(dir, "conversations")
 	if err := os.MkdirAll(convDir, 0o755); err != nil {
 		return nil, fmt.Errorf("creating IR directory %s: %w", convDir, err)
 	}
+	turnsFile, err := os.Create(filepath.Join(dir, TurnsFile))
+	if err != nil {
+		return nil, fmt.Errorf("creating turns table: %w", err)
+	}
 	return &Exporter{
-		dir:  dir,
-		opts: opts,
+		dir:         dir,
+		opts:        opts,
+		turnsFile:   turnsFile,
+		turnsWriter: parquet.NewGenericWriter[TurnRow](turnsFile, parquet.Compression(&parquet.Zstd)),
 		manifest: Manifest{
 			SchemaVersion: SchemaVersion,
 			GeneratedAt:   generatedAt,
@@ -101,6 +113,12 @@ func (e *Exporter) WriteConversation(cs model.ConversationSummary) error {
 	// Facts rows are tiny (metadata only) — buffering them all and sorting at
 	// Finish keeps the table deterministic regardless of conversation order.
 	e.facts = append(e.facts, mapFacts(cs)...)
+	// Turn rows carry content and stream straight into the table.
+	if rows := mapTurns(cs); len(rows) > 0 {
+		if _, err := e.turnsWriter.Write(rows); err != nil {
+			return fmt.Errorf("writing turns for %s: %w", conv.ID, err)
+		}
+	}
 	return nil
 }
 
@@ -122,6 +140,15 @@ func (e *Exporter) Finish(report *model.Report) error {
 		return fmt.Errorf("writing facts table: %w", err)
 	}
 	e.manifest.Files.Facts = FactsFile
+
+	if err := e.turnsWriter.Close(); err != nil {
+		e.turnsFile.Close()
+		return fmt.Errorf("finalizing turns table: %w", err)
+	}
+	if err := e.turnsFile.Close(); err != nil {
+		return fmt.Errorf("closing turns table: %w", err)
+	}
+	e.manifest.Files.Turns = TurnsFile
 
 	e.manifest.Totals = mapTotals(report.TotalStats, len(e.manifest.Conversations))
 

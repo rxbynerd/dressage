@@ -50,10 +50,13 @@ func TestGoldenIRExport(t *testing.T) {
 		if err := ir.Export(rpt, goldenDir, fixedSource, ir.ExportOptions{}); err != nil {
 			t.Fatalf("export (update): %v", err)
 		}
-		// Parquet goldens are kept as decoded-row JSON (see TestGoldenFacts),
-		// not committed binaries — drop the table from the golden tree.
-		if err := os.Remove(filepath.Join(goldenDir, ir.FactsFile)); err != nil {
-			t.Fatalf("remove parquet from golden dir: %v", err)
+		// Parquet goldens are kept as decoded-row JSON (TestGoldenFacts,
+		// TestGoldenTurns), not committed binaries — drop the tables from the
+		// golden tree.
+		for _, f := range []string{ir.FactsFile, ir.TurnsFile} {
+			if err := os.Remove(filepath.Join(goldenDir, f)); err != nil {
+				t.Fatalf("remove parquet from golden dir: %v", err)
+			}
 		}
 		t.Logf("wrote golden IR fixtures under %s", goldenDir)
 		return
@@ -306,7 +309,7 @@ func TestExportFilesystemHostileSessionID(t *testing.T) {
 
 	// (b) No file landed outside tmp/conversations/. Every emitted file must be
 	// a known run-level artifact or live under conversations/.
-	runLevel := map[string]bool{"manifest.json": true, ir.FactsFile: true}
+	runLevel := map[string]bool{"manifest.json": true, ir.FactsFile: true, ir.TurnsFile: true}
 	for rel := range collectFiles(t, tmp) {
 		if runLevel[rel] {
 			continue

@@ -15,7 +15,8 @@
   },
   "raw_bodies": "omitted",
   "files": {
-    "facts": "facts.parquet"
+    "facts": "facts.parquet",
+    "turns": "turns.parquet"
   },
   "totals": {
     "conversations": 4,

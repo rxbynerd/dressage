@@ -47,7 +47,7 @@ func TestGoldenIRExport(t *testing.T) {
 		if err := os.RemoveAll(goldenDir); err != nil {
 			t.Fatalf("clean golden dir: %v", err)
 		}
-		if err := ir.Export(rpt, goldenDir, fixedSource); err != nil {
+		if err := ir.Export(rpt, goldenDir, fixedSource, ir.ExportOptions{}); err != nil {
 			t.Fatalf("export (update): %v", err)
 		}
 		t.Logf("wrote golden IR fixtures under %s", goldenDir)
@@ -55,7 +55,7 @@ func TestGoldenIRExport(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -83,7 +83,7 @@ func TestGoldenIRExport(t *testing.T) {
 func TestIRExportRoundTrip(t *testing.T) {
 	rpt := goldenReport()
 	tmp := t.TempDir()
-	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -136,7 +136,7 @@ func TestIRExportRoundTrip(t *testing.T) {
 func TestIRExportDeferredProvider(t *testing.T) {
 	rpt := goldenReport()
 	tmp := t.TempDir()
-	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -190,7 +190,7 @@ func TestIRExportDeferredProvider(t *testing.T) {
 func TestIRExportFidelity(t *testing.T) {
 	rpt := goldenReport()
 	tmp := t.TempDir()
-	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -238,10 +238,10 @@ func TestIRExportDeterministic(t *testing.T) {
 	rpt := goldenReport()
 
 	dirA, dirB := t.TempDir(), t.TempDir()
-	if err := ir.Export(rpt, dirA, fixedSource); err != nil {
+	if err := ir.Export(rpt, dirA, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export A: %v", err)
 	}
-	if err := ir.Export(rpt, dirB, fixedSource); err != nil {
+	if err := ir.Export(rpt, dirB, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export B: %v", err)
 	}
 
@@ -284,7 +284,7 @@ func TestExportFilesystemHostileSessionID(t *testing.T) {
 		},
 	}
 	tmp := t.TempDir()
-	if err := ir.Export(reportWith(cs), tmp, fixedSource); err != nil {
+	if err := ir.Export(reportWith(cs), tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -336,7 +336,7 @@ func TestExportFilesystemHostileSessionID(t *testing.T) {
 func TestIRExportEmptyReport(t *testing.T) {
 	rpt := &model.Report{GeneratedAt: fixedGeneratedAt}
 	tmp := t.TempDir()
-	if err := ir.Export(rpt, tmp, fixedSource); err != nil {
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export empty report: %v", err)
 	}
 
@@ -393,7 +393,7 @@ func TestIRExportNonJSONToolInputRoundTrips(t *testing.T) {
 		},
 	}
 	tmp := t.TempDir()
-	if err := ir.Export(reportWith(cs), tmp, fixedSource); err != nil {
+	if err := ir.Export(reportWith(cs), tmp, fixedSource, ir.ExportOptions{}); err != nil {
 		t.Fatalf("export: %v", err)
 	}
 
@@ -579,5 +579,97 @@ func readJSON(t *testing.T, path string, v any) {
 	}
 	if err := json.Unmarshal(b, v); err != nil {
 		t.Fatalf("unmarshal %s: %v", path, err)
+	}
+}
+
+// TestStreamingExporterMatchesExport locks the equivalence of the two write
+// paths: streaming conversations through an Exporter one at a time must
+// produce a byte-identical directory to the batch Export wrapper.
+func TestStreamingExporterMatchesExport(t *testing.T) {
+	rpt := goldenReport()
+	batch, stream := t.TempDir(), t.TempDir()
+
+	if err := ir.Export(rpt, batch, fixedSource, ir.ExportOptions{}); err != nil {
+		t.Fatalf("batch export: %v", err)
+	}
+
+	e, err := ir.NewExporter(stream, fixedSource, rpt.GeneratedAt, ir.ExportOptions{})
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+	for _, day := range rpt.Days {
+		for _, cs := range day.Conversations {
+			if err := e.WriteConversation(cs); err != nil {
+				t.Fatalf("WriteConversation: %v", err)
+			}
+		}
+	}
+	if err := e.Finish(rpt); err != nil {
+		t.Fatalf("Finish: %v", err)
+	}
+
+	got, want := collectFiles(t, stream), collectFiles(t, batch)
+	if len(got) != len(want) {
+		t.Fatalf("file set differs: streaming %v, batch %v", keys(got), keys(want))
+	}
+	for rel, data := range want {
+		if string(got[rel]) != string(data) {
+			t.Errorf("file %s differs between streaming and batch export", rel)
+		}
+	}
+}
+
+// TestExportEmbedsRawBodiesWhenAsked covers the opt-in path: with RawBodies
+// set, invocation payloads are embedded verbatim and the manifest says so.
+func TestExportEmbedsRawBodiesWhenAsked(t *testing.T) {
+	rpt := goldenReport()
+	tmp := t.TempDir()
+	if err := ir.Export(rpt, tmp, fixedSource, ir.ExportOptions{RawBodies: true}); err != nil {
+		t.Fatalf("export: %v", err)
+	}
+
+	manifest, err := os.ReadFile(filepath.Join(tmp, "manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	var m struct {
+		RawBodies string `json:"raw_bodies"`
+	}
+	if err := json.Unmarshal(manifest, &m); err != nil {
+		t.Fatalf("manifest not JSON: %v", err)
+	}
+	if m.RawBodies != "embedded" {
+		t.Errorf("manifest raw_bodies = %q, want embedded", m.RawBodies)
+	}
+
+	conv, err := os.ReadFile(filepath.Join(tmp, "conversations", "bedrock-sess-1.json"))
+	if err != nil {
+		t.Fatalf("read conversation: %v", err)
+	}
+	var c struct {
+		Invocations []struct {
+			Input struct {
+				JSON json.RawMessage `json:"json"`
+			} `json:"input"`
+		} `json:"invocations"`
+	}
+	if err := json.Unmarshal(conv, &c); err != nil {
+		t.Fatalf("conversation not JSON: %v", err)
+	}
+	if len(c.Invocations) == 0 || len(c.Invocations[0].Input.JSON) == 0 {
+		t.Error("expected embedded input payload with RawBodies: true")
+	}
+
+	// And the default path omits them.
+	tmp2 := t.TempDir()
+	if err := ir.Export(rpt, tmp2, fixedSource, ir.ExportOptions{}); err != nil {
+		t.Fatalf("export (default): %v", err)
+	}
+	conv2, err := os.ReadFile(filepath.Join(tmp2, "conversations", "bedrock-sess-1.json"))
+	if err != nil {
+		t.Fatalf("read conversation: %v", err)
+	}
+	if strings.Contains(string(conv2), `"json":`) {
+		t.Error("default export embedded a raw payload; want omitted")
 	}
 }

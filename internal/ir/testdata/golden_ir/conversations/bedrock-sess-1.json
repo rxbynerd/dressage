@@ -1,5 +1,5 @@
 {
-  "schema_version": "dressage.ir/1.0",
+  "schema_version": "dressage.ir/1.1",
   "id": "bedrock-sess-1",
   "display_id": "conv-20240115-1",
   "session_id": "bedrock-sess-1",
@@ -91,53 +91,13 @@
         "content_type": "application/json",
         "token_count": 40,
         "cache_read": 10,
-        "cache_write": 4,
-        "json": {
-          "metadata": {
-            "user_id": "user_hash_account__session_bedrock-sess-1"
-          },
-          "system": "You are a coding assistant.",
-          "messages": [
-            {
-              "role": "user",
-              "content": "List the files."
-            }
-          ],
-          "tools": [
-            {
-              "name": "Bash",
-              "description": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-              "input_schema": {
-                "type": "object",
-                "properties": {
-                  "command": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "command"
-                ]
-              }
-            }
-          ]
-        }
+        "cache_write": 4
       },
       "output": {
         "content_type": "application/json",
         "token_count": 12,
         "cache_read": 0,
-        "cache_write": 0,
-        "json": {
-          "id": "msg_b",
-          "role": "assistant",
-          "stop_reason": "end_turn",
-          "content": [
-            {
-              "type": "text",
-              "text": "Here are the files."
-            }
-          ]
-        }
+        "cache_write": 0
       }
     }
   ]

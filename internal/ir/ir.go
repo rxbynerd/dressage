@@ -20,16 +20,29 @@ import (
 // every emitted file. It follows "dressage.ir/MAJOR.MINOR": additive,
 // backward-compatible changes bump MINOR; breaking changes bump MAJOR.
 // Consumers should accept any matching MAJOR and ignore unknown fields.
-const SchemaVersion = "dressage.ir/1.0"
+//
+// 1.1: raw request/response bodies became opt-in (manifest raw_bodies records
+// the choice; the body json fields were always optional).
+const SchemaVersion = "dressage.ir/1.1"
+
+// Values of Manifest.RawBodies.
+const (
+	RawBodiesEmbedded = "embedded" // invocations[].input.json / output.json carry the verbatim payloads
+	RawBodiesOmitted  = "omitted"  // payload fields are absent; token/cache accounting is still present
+)
 
 // Manifest is the run-level index written to manifest.json. It carries run
 // metadata, aggregate totals, and a lightweight entry per conversation so a
 // consumer can triage and shard without opening every conversation file.
 type Manifest struct {
-	SchemaVersion string          `json:"schema_version"`
-	GeneratedAt   time.Time       `json:"generated_at"`
-	Tool          ToolInfo        `json:"tool"`
-	Source        SourceInfo      `json:"source"`
+	SchemaVersion string     `json:"schema_version"`
+	GeneratedAt   time.Time  `json:"generated_at"`
+	Tool          ToolInfo   `json:"tool"`
+	Source        SourceInfo `json:"source"`
+	// RawBodies records whether this export embeds verbatim invocation
+	// payloads: RawBodiesEmbedded or RawBodiesOmitted. Consumers that need
+	// exact wire bodies must check it before relying on invocations[].*.json.
+	RawBodies     string          `json:"raw_bodies"`
 	Totals        ManifestTotals  `json:"totals"`
 	Conversations []ManifestEntry `json:"conversations"`
 }

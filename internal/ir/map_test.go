@@ -70,7 +70,7 @@ func TestMapConversationDeferredProviderHasNullConversation(t *testing.T) {
 		},
 	}
 
-	conv := mapConversation(cs)
+	conv := mapConversation(cs, ExportOptions{RawBodies: true})
 	if conv.Conversation != nil {
 		t.Errorf("deferred provider Conversation = %+v, want nil", conv.Conversation)
 	}
@@ -229,7 +229,7 @@ func TestMapInvocationsEmbedsInlineBodies(t *testing.T) {
 		ProviderExtras: json.RawMessage(`{"correlationId":"abc"}`),
 	}}
 
-	out := mapInvocations(invs)
+	out := mapInvocations(invs, ExportOptions{RawBodies: true})
 	if len(out) != 1 {
 		t.Fatalf("invocations = %d, want 1", len(out))
 	}

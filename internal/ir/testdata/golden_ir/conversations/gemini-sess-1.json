@@ -1,5 +1,5 @@
 {
-  "schema_version": "dressage.ir/1.0",
+  "schema_version": "dressage.ir/1.1",
   "id": "gemini-sess-1",
   "display_id": "conv-20240115-2",
   "session_id": "gemini-sess-1",
@@ -83,70 +83,13 @@
         "content_type": "application/json",
         "token_count": 15,
         "cache_read": 0,
-        "cache_write": 0,
-        "json": {
-          "systemInstruction": {
-            "parts": [
-              {
-                "text": "You are vision-capable._session_gemini-sess-1"
-              }
-            ]
-          },
-          "contents": [
-            {
-              "role": "user",
-              "parts": [
-                {
-                  "inlineData": {
-                    "mimeType": "image/png",
-                    "data": "aGVsbG8="
-                  }
-                },
-                {
-                  "text": "What is in this image?"
-                }
-              ]
-            }
-          ],
-          "tools": [
-            {
-              "functionDeclarations": [
-                {
-                  "name": "describe",
-                  "description": "describes an image",
-                  "parameters": {
-                    "type": "object"
-                  }
-                }
-              ]
-            }
-          ]
-        }
+        "cache_write": 0
       },
       "output": {
         "content_type": "application/json",
         "token_count": 3,
         "cache_read": 0,
-        "cache_write": 0,
-        "json": {
-          "candidates": [
-            {
-              "content": {
-                "role": "model",
-                "parts": [
-                  {
-                    "text": "A greeting."
-                  }
-                ]
-              },
-              "finishReason": "STOP"
-            }
-          ],
-          "usageMetadata": {
-            "promptTokenCount": 15,
-            "candidatesTokenCount": 3
-          }
-        }
+        "cache_write": 0
       }
     }
   ]

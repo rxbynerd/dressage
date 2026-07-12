@@ -380,7 +380,7 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 			},
 		}
 		log.Printf("Exporting IR to %s...", irDir)
-		if err := ir.Export(rpt, irDir, src); err != nil {
+		if err := ir.Export(rpt, irDir, src, ir.ExportOptions{}); err != nil {
 			return fmt.Errorf("exporting IR: %w", err)
 		}
 	}

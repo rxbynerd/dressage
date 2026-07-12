@@ -16,6 +16,7 @@ type Record struct {
 	Operation      string // provider operation name, e.g. "InvokeModelWithResponseStream", "ChatCompletions_Create"
 	Status         string // raw provider status string, e.g. "200" (passed through to the report unchanged)
 	ErrorCode      string // non-empty marks an errored invocation
+	StopReason     string // response stop/finish reason when the fetcher lifts it cheaply from the response envelope; "" otherwise
 	Identity       Identity
 	SessionID      string // session id pre-extracted from the request body; "" when absent or when the fetcher leaves extraction to the summary layer
 	Correlation    Correlation

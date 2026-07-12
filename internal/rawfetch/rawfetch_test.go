@@ -281,3 +281,136 @@ func TestParseUserIDForms(t *testing.T) {
 		t.Errorf("parseUserID legacy form = %+v, want zero", got)
 	}
 }
+
+// requestBodyFirstMsg is requestBody with a controllable first message, so
+// tests can lay down distinct chains (main thread vs subagent sidechains)
+// within one session.
+func requestBodyFirstMsg(t *testing.T, modelID, sessionID, prevID, firstMsg string, numMsgs int) []byte {
+	t.Helper()
+	msgs := make([]map[string]any, 0, numMsgs)
+	msgs = append(msgs, map[string]any{"role": "user", "content": firstMsg})
+	for i := 1; i < numMsgs; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "assistant"
+		}
+		msgs = append(msgs, map[string]any{"role": role, "content": "m"})
+	}
+	userID, _ := json.Marshal(map[string]string{
+		"device_id":    "dev-1",
+		"account_uuid": "acct-1",
+		"session_id":   sessionID,
+	})
+	req := map[string]any{
+		"model":       modelID,
+		"messages":    msgs,
+		"metadata":    map[string]string{"user_id": string(userID)},
+		"diagnostics": map[string]any{"previous_message_id": prevID},
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal request: %v", err)
+	}
+	return data
+}
+
+// TestFetchParallelSidechains pins the chain-aware pairing: a subagent chain
+// interleaved with the main thread must not steal the main thread's response
+// (the pre-chain adjacency pairing paired by message-count order across the
+// whole session and misattributed exactly this shape).
+func TestFetchParallelSidechains(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	const model = "claude-test"
+
+	// Main thread turn 1: 1 message at t+0, response msg_m1.
+	writeFile(t, dir, "main1.request.json", requestBodyFirstMsg(t, model, "sess-p", "", "main task", 1), base)
+	writeFile(t, dir, "req_M1.response.json", responseBody(t, model, "msg_m1", 10, 100, 0), base.Add(time.Second))
+
+	// Subagent chain: 1 message at t+5s (interleaves before main turn 2),
+	// response msg_s1 with distinct token counts.
+	writeFile(t, dir, "sub1.request.json", requestBodyFirstMsg(t, model, "sess-p", "", "subagent task", 1), base.Add(5*time.Second))
+	writeFile(t, dir, "req_S1.response.json", responseBody(t, model, "msg_s1", 99, 999, 0), base.Add(6*time.Second))
+
+	// Main thread turn 2: 3 messages at t+10s, prev names main turn 1's
+	// response. Its own response msg_m2 arrives at t+11s.
+	writeFile(t, dir, "main2.request.json", requestBodyFirstMsg(t, model, "sess-p", "msg_m1", "main task", 3), base.Add(10*time.Second))
+	writeFile(t, dir, "req_M2.response.json", responseBody(t, model, "msg_m2", 20, 200, 0), base.Add(11*time.Second))
+
+	records, err := New(dir).Fetch(context.Background(), time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("got %d records, want 3", len(records))
+	}
+
+	// Sorted by mtime: main1, sub1, main2.
+	byReq := map[string]int{"req_M1": 0, "req_S1": 1, "req_M2": 2}
+	for want, i := range byReq {
+		if records[i].RequestID != want {
+			t.Errorf("record %d RequestID = %q, want %q (chain pairing failed)", i, records[i].RequestID, want)
+		}
+	}
+	if got := records[1].Input.TokenCount; got != 99 {
+		t.Errorf("subagent input tokens = %d, want 99 (response misattributed)", got)
+	}
+	if got := records[0].Input.TokenCount; got != 10 {
+		t.Errorf("main turn 1 input tokens = %d, want 10", got)
+	}
+
+	// Thread ids: both main turns share the main root's uuid; the subagent has
+	// its own.
+	if records[0].Correlation.ThreadID != "main1" || records[2].Correlation.ThreadID != "main1" {
+		t.Errorf("main thread ids = (%q, %q), want (main1, main1)",
+			records[0].Correlation.ThreadID, records[2].Correlation.ThreadID)
+	}
+	if records[1].Correlation.ThreadID != "sub1" {
+		t.Errorf("subagent thread id = %q, want sub1", records[1].Correlation.ThreadID)
+	}
+
+	// Correlation lift: message ids and stop reason come from the response
+	// envelope; the transcript length from the request.
+	if records[0].Correlation.MessageID != "msg_m1" || records[0].StopReason != "end_turn" {
+		t.Errorf("record 0 correlation = %+v stop=%q", records[0].Correlation, records[0].StopReason)
+	}
+	if records[2].Correlation.PrevMessageID != "msg_m1" || records[2].Correlation.NumMessages != 3 {
+		t.Errorf("record 2 correlation = %+v", records[2].Correlation)
+	}
+}
+
+// TestFetchCompactionStitchesThread pins the compaction link: a rewritten
+// transcript arrives as a new chain whose root names the old context's final
+// response; the old tip must claim that response (even far outside the
+// write-time window) and both chains must share one thread id.
+func TestFetchCompactionStitchesThread(t *testing.T) {
+	dir := t.TempDir()
+	base := time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC)
+	const model = "claude-test"
+
+	// Old context: single turn, response written 1s later.
+	writeFile(t, dir, "old.request.json", requestBodyFirstMsg(t, model, "sess-c", "", "original prompt", 1), base)
+	writeFile(t, dir, "req_OLD.response.json", responseBody(t, model, "msg_old", 10, 100, 0), base.Add(time.Second))
+
+	// Continuation after compaction: different first message (rewritten
+	// transcript), root prev names msg_old, written well outside the
+	// write-time fallback window so only the id link can pair the old tip.
+	late := base.Add(3 * terminalMatchWindow)
+	writeFile(t, dir, "new.request.json", requestBodyFirstMsg(t, model, "sess-c", "msg_old", "compacted summary", 1), late)
+	writeFile(t, dir, "req_NEW.response.json", responseBody(t, model, "msg_new", 20, 200, 0), late.Add(time.Second))
+
+	records, err := New(dir).Fetch(context.Background(), time.Time{}, time.Time{})
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("got %d records, want 2", len(records))
+	}
+	if records[0].RequestID != "req_OLD" {
+		t.Errorf("old tip RequestID = %q, want req_OLD (compaction link did not pair it)", records[0].RequestID)
+	}
+	if records[0].Correlation.ThreadID != "old" || records[1].Correlation.ThreadID != "old" {
+		t.Errorf("thread ids = (%q, %q), want both 'old' (stitching failed)",
+			records[0].Correlation.ThreadID, records[1].Correlation.ThreadID)
+	}
+}

@@ -1,7 +1,10 @@
 package rawfetch
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log"
 	"os"
@@ -23,6 +26,7 @@ type parsedRequest struct {
 	model       string
 	sessionID   string
 	prevID      string // diagnostics.previous_message_id ("" on the first turn)
+	chainKey    string // hash of messages[0]; requests of one linear thread share it
 	numMessages int
 	accountUUID string
 	deviceID    string
@@ -38,6 +42,7 @@ type responseMeta struct {
 	path         string
 	mtime        time.Time
 	model        string
+	stopReason   string
 	inputTokens  int64
 	outputTokens int64
 	cacheRead    int64
@@ -46,17 +51,34 @@ type responseMeta struct {
 }
 
 // reqEnvelope decodes just the request fields needed for correlation and
-// identity. messages is decoded into zero-size elements so only its length is
-// retained, not the (potentially huge) message contents.
+// identity. messages elements are kept raw and unexamined — only their count
+// and the first element (hashed into the chain key) are used; the decoded
+// slice is released when the envelope goes out of scope.
 type reqEnvelope struct {
-	Model    string     `json:"model"`
-	Messages []struct{} `json:"messages"`
+	Model    string            `json:"model"`
+	Messages []json.RawMessage `json:"messages"`
 	Metadata struct {
 		UserID string `json:"user_id"`
 	} `json:"metadata"`
 	Diagnostics struct {
 		PreviousMessageID string `json:"previous_message_id"`
 	} `json:"diagnostics"`
+}
+
+// chainKeyOf hashes a request's first message into its chain key. A linear
+// thread's first message is invariant as the transcript grows (the opening
+// user prompt for the main thread, the task prompt for a subagent), so growing
+// prefixes of one thread share a key while parallel threads in the same
+// session split. The message is compacted first so formatting differences
+// cannot split a chain.
+func chainKeyOf(first json.RawMessage) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, first); err != nil {
+		sum := sha256.Sum256(first)
+		return hex.EncodeToString(sum[:])
+	}
+	sum := sha256.Sum256(buf.Bytes())
+	return hex.EncodeToString(sum[:])
 }
 
 // userIDBlob decodes the JSON object form of metadata.user_id written by the
@@ -70,9 +92,10 @@ type userIDBlob struct {
 // respEnvelope decodes the response fields needed for the index; content is
 // deliberately omitted so it is skipped rather than retained.
 type respEnvelope struct {
-	ID    string `json:"id"`
-	Model string `json:"model"`
-	Usage struct {
+	ID         string `json:"id"`
+	Model      string `json:"model"`
+	StopReason string `json:"stop_reason"`
+	Usage      struct {
 		InputTokens              int64 `json:"input_tokens"`
 		OutputTokens             int64 `json:"output_tokens"`
 		CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
@@ -112,6 +135,7 @@ func parseRequests(ctx context.Context, paths []timedPath, workers int) ([]parse
 			model:       env.Model,
 			sessionID:   conversation.ExtractSessionID(provider, env.Model, data),
 			prevID:      env.Diagnostics.PreviousMessageID,
+			chainKey:    chainKeyOf(env.Messages[0]),
 			numMessages: len(env.Messages),
 			accountUUID: blob.AccountUUID,
 			deviceID:    blob.DeviceID,
@@ -153,6 +177,7 @@ func indexResponses(ctx context.Context, paths []timedPath, workers int) (map[st
 			path:         tp.path,
 			mtime:        tp.mtime,
 			model:        env.Model,
+			stopReason:   env.StopReason,
 			inputTokens:  env.Usage.InputTokens,
 			outputTokens: env.Usage.OutputTokens,
 			cacheRead:    env.Usage.CacheReadInputTokens,
@@ -187,15 +212,18 @@ func parseUserID(userID string) userIDBlob {
 }
 
 // buildRecords pairs parsed requests with their response bodies and materializes
-// the normalized records. Pairing within a session uses the message-id chain
-// (turn i's response is the body named by turn i+1's previous_message_id); each
-// session's terminal turn is matched by write time. Requests are returned sorted
-// by (mtime, uuid) for deterministic output.
+// the normalized records. Each session's requests are split into chains (linear
+// threads: the main thread and each subagent sidechain), pairing runs per chain
+// via the message-id links (turn i's response is the body named by turn i+1's
+// previous_message_id), and each chain's terminal turn is matched by write
+// time. Requests are returned sorted by (mtime, uuid) for deterministic output.
 func buildRecords(reqs []parsedRequest, respIndex map[string]*responseMeta) []model.Record {
 	// paired[i] is the response chosen for reqs[i], or nil if none.
 	paired := make([]*responseMeta, len(reqs))
+	// threadIDs[i] is the thread (chain) reqs[i] belongs to.
+	threadIDs := make([]string, len(reqs))
 
-	// Group request indices by session so message-count ordering is per-session.
+	// Group request indices by session; chain splitting is per-session.
 	sessions := make(map[string][]int)
 	order := make([]string, 0)
 	for i := range reqs {
@@ -207,36 +235,16 @@ func buildRecords(reqs []parsedRequest, respIndex map[string]*responseMeta) []mo
 	}
 	sort.Strings(order)
 
-	var terminals []int // request indices needing the write-time fallback
+	var terminals []int // unpaired chain tips needing the write-time fallback
 	for _, sid := range order {
-		idxs := sessions[sid]
-		sort.Slice(idxs, func(a, b int) bool {
-			ra, rb := reqs[idxs[a]], reqs[idxs[b]]
-			if ra.numMessages != rb.numMessages {
-				return ra.numMessages < rb.numMessages
-			}
-			return ra.mtime.Before(rb.mtime)
-		})
-		// Turn i's response is named by turn i+1's previous_message_id.
-		for pos := 0; pos+1 < len(idxs); pos++ {
-			prev := reqs[idxs[pos+1]].prevID
-			if prev == "" {
-				continue
-			}
-			if rm, ok := respIndex[prev]; ok && !rm.claimed {
-				rm.claimed = true
-				paired[idxs[pos]] = rm
-			}
-		}
-		// The terminal turn has no successor to name its response.
-		terminals = append(terminals, idxs[len(idxs)-1])
+		terminals = append(terminals, pairSession(reqs, sessions[sid], respIndex, paired, threadIDs)...)
 	}
 
 	matchTerminals(reqs, terminals, respIndex, paired)
 
 	records := make([]model.Record, 0, len(reqs))
 	for i := range reqs {
-		records = append(records, makeRecord(reqs[i], paired[i]))
+		records = append(records, makeRecord(reqs[i], paired[i], threadIDs[i]))
 	}
 	sort.Slice(records, func(a, b int) bool {
 		if !records[a].Timestamp.Equal(records[b].Timestamp) {
@@ -245,6 +253,151 @@ func buildRecords(reqs []parsedRequest, respIndex map[string]*responseMeta) []mo
 		return records[a].RequestID < records[b].RequestID
 	})
 	return records
+}
+
+// splitChains groups one session's request indices into chains by chain key.
+// Growing prefixes of one linear thread share the key, so the main thread and
+// each subagent sidechain land in separate chains even when their turns
+// interleave in time. Each chain is ordered by (message count, mtime); chains
+// are returned in root-mtime order (ties: root uuid) so the earliest-started
+// thread comes first and processing is deterministic.
+func splitChains(reqs []parsedRequest, idxs []int) [][]int {
+	groups := make(map[string][]int)
+	keys := make([]string, 0)
+	for _, i := range idxs {
+		k := reqs[i].chainKey
+		if _, ok := groups[k]; !ok {
+			keys = append(keys, k)
+		}
+		groups[k] = append(groups[k], i)
+	}
+
+	chains := make([][]int, 0, len(keys))
+	for _, k := range keys {
+		c := groups[k]
+		sort.Slice(c, func(a, b int) bool {
+			ra, rb := reqs[c[a]], reqs[c[b]]
+			if ra.numMessages != rb.numMessages {
+				return ra.numMessages < rb.numMessages
+			}
+			return ra.mtime.Before(rb.mtime)
+		})
+		chains = append(chains, c)
+	}
+	sort.Slice(chains, func(a, b int) bool {
+		ra, rb := reqs[chains[a][0]], reqs[chains[b][0]]
+		if !ra.mtime.Equal(rb.mtime) {
+			return ra.mtime.Before(rb.mtime)
+		}
+		return ra.uuid < rb.uuid
+	})
+	return chains
+}
+
+// pairSession pairs one session's requests with responses and assigns thread
+// ids. Requests split into chains, each chain pairs by message-id adjacency,
+// and compaction continuations — a chain whose root names another chain's
+// response — are stitched into that chain's thread. The thread id is the root
+// chain's first request uuid. It returns the chain tips still unpaired, for
+// the write-time fallback.
+func pairSession(reqs []parsedRequest, idxs []int, respIndex map[string]*responseMeta, paired []*responseMeta, threadIDs []string) []int {
+	chains := splitChains(reqs, idxs)
+
+	// Within a chain, turn i's response is named by turn i+1's
+	// previous_message_id. (A non-root request's predecessor is in its own
+	// chain by construction: both carry the same first message.)
+	for _, c := range chains {
+		for pos := 0; pos+1 < len(c); pos++ {
+			prev := reqs[c[pos+1]].prevID
+			if prev == "" {
+				continue
+			}
+			if rm, ok := respIndex[prev]; ok && !rm.claimed {
+				rm.claimed = true
+				paired[c[pos]] = rm
+			}
+		}
+	}
+
+	// respChain: paired response message id → index of the chain that received
+	// it, for resolving compaction links below.
+	respChain := make(map[string]int)
+	for ci, c := range chains {
+		for _, ri := range c {
+			if rm := paired[ri]; rm != nil {
+				respChain[rm.msgID] = ci
+			}
+		}
+	}
+
+	// Compaction rewrites the transcript, so the continuation arrives as a new
+	// chain whose ROOT names the old context's final response. Stitch such a
+	// chain into the named response's thread; when that response is still
+	// unclaimed, it also pairs to the nearest preceding unpaired chain tip (the
+	// old context's final request). Chains are in root-mtime order, so an
+	// owner's thread root is final before any continuation of it is processed.
+	rootOf := make([]int, len(chains))
+	for ci := range chains {
+		rootOf[ci] = ci
+	}
+	for ci, c := range chains {
+		prev := reqs[c[0]].prevID
+		if prev == "" {
+			continue
+		}
+		owner, ok := respChain[prev]
+		if !ok {
+			if rm, exists := respIndex[prev]; exists && !rm.claimed {
+				if oi, tip := precedingUnpairedTip(reqs, chains, paired, ci, rm); oi >= 0 {
+					rm.claimed = true
+					paired[tip] = rm
+					respChain[rm.msgID] = oi
+					owner, ok = oi, true
+				}
+			}
+		}
+		if ok && owner != ci {
+			rootOf[ci] = rootOf[owner]
+		}
+	}
+
+	var tips []int
+	for ci, c := range chains {
+		tid := reqs[chains[rootOf[ci]][0]].uuid
+		for _, ri := range c {
+			threadIDs[ri] = tid
+		}
+		if tip := c[len(c)-1]; paired[tip] == nil {
+			tips = append(tips, tip)
+		}
+	}
+	return tips
+}
+
+// precedingUnpairedTip finds the chain (before index `before`, in root-mtime
+// order) whose still-unpaired tip most plausibly produced rm: written at or
+// before rm, same model when both are known, latest such tip winning. Returns
+// (-1, -1) when no chain qualifies.
+func precedingUnpairedTip(reqs []parsedRequest, chains [][]int, paired []*responseMeta, before int, rm *responseMeta) (chainIdx, tipIdx int) {
+	chainIdx, tipIdx = -1, -1
+	var bestMtime time.Time
+	for ci := range before {
+		tip := chains[ci][len(chains[ci])-1]
+		if paired[tip] != nil {
+			continue
+		}
+		r := reqs[tip]
+		if r.mtime.After(rm.mtime) {
+			continue
+		}
+		if r.model != "" && rm.model != "" && r.model != rm.model {
+			continue
+		}
+		if chainIdx < 0 || r.mtime.After(bestMtime) {
+			chainIdx, tipIdx, bestMtime = ci, tip, r.mtime
+		}
+	}
+	return chainIdx, tipIdx
 }
 
 // matchTerminals assigns each terminal request the earliest unclaimed response
@@ -291,10 +444,11 @@ func matchTerminals(reqs []parsedRequest, terminals []int, respIndex map[string]
 	}
 }
 
-// makeRecord assembles one normalized record from a parsed request and its
-// optional paired response. Token accounting and the API request id come from
-// the response; when unpaired only the request-side fields are populated.
-func makeRecord(pr parsedRequest, rm *responseMeta) model.Record {
+// makeRecord assembles one normalized record from a parsed request, its
+// optional paired response, and its thread id. Token accounting, the API
+// request id, the response message id and the stop reason come from the
+// response; when unpaired only the request-side fields are populated.
+func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Record {
 	rec := model.Record{
 		Provider:  provider,
 		Timestamp: pr.mtime.UTC(),
@@ -305,6 +459,11 @@ func makeRecord(pr parsedRequest, rm *responseMeta) model.Record {
 			Principal: pr.accountUUID,
 			Extra:     identityExtra(pr),
 		},
+		Correlation: model.Correlation{
+			PrevMessageID: pr.prevID,
+			ThreadID:      threadID,
+			NumMessages:   pr.numMessages,
+		},
 		Input: model.Body{JSON: pr.raw, ContentType: "application/json"},
 	}
 	if rm == nil {
@@ -313,6 +472,8 @@ func makeRecord(pr parsedRequest, rm *responseMeta) model.Record {
 
 	rec.Status = "200"
 	rec.RequestID = rm.apiReqID
+	rec.StopReason = rm.stopReason
+	rec.Correlation.MessageID = rm.msgID
 	rec.Input.TokenCount = rm.inputTokens
 	rec.Input.CacheRead = rm.cacheRead
 	rec.Input.CacheWrite = rm.cacheWrite

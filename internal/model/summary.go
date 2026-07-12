@@ -76,6 +76,8 @@ type Invocation struct {
 	// used by the HTML report but let the IR exporter embed inline JSON bodies
 	// and full per-invocation metadata without re-fetching the source logs.
 	LatencyMs      int64
+	StopReason     string      // response stop/finish reason, when the fetcher lifted it
+	Correlation    Correlation // provider-assigned message/thread linkage, when available
 	FullIdentity   Identity
 	Input          Body            // raw input body + token/cache accounting
 	Output         Body            // raw output body + token/cache accounting

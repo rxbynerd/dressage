@@ -8,6 +8,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/parquet-go/parquet-go"
+
 	"github.com/rxbynerd/dressage/internal/model"
 )
 
@@ -49,6 +51,7 @@ type Exporter struct {
 	manifest  Manifest
 	opts      ExportOptions
 	usedNames map[string]int
+	facts     []FactRow
 }
 
 // NewExporter prepares dir for an export, creating the directory layout.
@@ -95,13 +98,31 @@ func (e *Exporter) WriteConversation(cs model.ConversationSummary) error {
 		return fmt.Errorf("writing conversation %s: %w", conv.ID, err)
 	}
 	e.manifest.Conversations = append(e.manifest.Conversations, mapEntry(conv, rel))
+	// Facts rows are tiny (metadata only) — buffering them all and sorting at
+	// Finish keeps the table deterministic regardless of conversation order.
+	e.facts = append(e.facts, mapFacts(cs)...)
 	return nil
 }
 
-// Finish sorts the manifest index and writes manifest.json. The report supplies
-// the run-wide totals (its stats are complete even when conversations were
-// streamed rather than retained).
+// Finish writes the columnar tables, sorts the manifest index, and writes
+// manifest.json. The report supplies the run-wide totals (its stats are
+// complete even when conversations were streamed rather than retained).
 func (e *Exporter) Finish(report *model.Report) error {
+	sort.SliceStable(e.facts, func(i, j int) bool {
+		a, b := e.facts[i], e.facts[j]
+		if !a.Timestamp.Equal(b.Timestamp) {
+			return a.Timestamp.Before(b.Timestamp)
+		}
+		if a.RequestID != b.RequestID {
+			return a.RequestID < b.RequestID
+		}
+		return a.RequestUUID < b.RequestUUID
+	})
+	if err := writeParquet(filepath.Join(e.dir, FactsFile), e.facts); err != nil {
+		return fmt.Errorf("writing facts table: %w", err)
+	}
+	e.manifest.Files.Facts = FactsFile
+
 	e.manifest.Totals = mapTotals(report.TotalStats, len(e.manifest.Conversations))
 
 	// Sort the index for byte-stable output: by start time, then id. Stable so
@@ -186,6 +207,28 @@ func mapTotals(stats model.Stats, conversations int) ManifestTotals {
 		OutputTokens:  stats.OutputTokens,
 		Errors:        stats.ErrorCount,
 	}
+}
+
+// writeParquet writes rows as a zstd-compressed Parquet file at path. Note
+// that Parquet bytes are NOT stable across parquet-go versions (footer
+// metadata embeds the library); tests assert on decoded rows, not file bytes.
+func writeParquet[T any](path string, rows []T) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("creating %s: %w", path, err)
+	}
+	w := parquet.NewGenericWriter[T](f, parquet.Compression(&parquet.Zstd))
+	if len(rows) > 0 {
+		if _, err := w.Write(rows); err != nil {
+			f.Close()
+			return fmt.Errorf("writing rows to %s: %w", path, err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		f.Close()
+		return fmt.Errorf("finalizing %s: %w", path, err)
+	}
+	return f.Close()
 }
 
 // writeJSON marshals v as indented JSON and writes it to path. A trailing

@@ -34,6 +34,7 @@ type Correlation struct {
 	MessageID     string // response message id (e.g. "msg_...")
 	PrevMessageID string // prior turn's response message id named by the request
 	ThreadID      string // stable id of the request chain this invocation belongs to
+	RequestUUID   string // capture-assigned request id (e.g. the request filename uuid)
 	NumMessages   int    // number of messages in the request transcript (0 if unknown)
 }
 

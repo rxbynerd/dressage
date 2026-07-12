@@ -468,6 +468,7 @@ func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Recor
 		Correlation: model.Correlation{
 			PrevMessageID: pr.prevID,
 			ThreadID:      threadID,
+			RequestUUID:   pr.uuid,
 			NumMessages:   pr.numMessages,
 		},
 		Input: model.Body{

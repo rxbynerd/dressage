@@ -43,8 +43,17 @@ type Manifest struct {
 	// payloads: RawBodiesEmbedded or RawBodiesOmitted. Consumers that need
 	// exact wire bodies must check it before relying on invocations[].*.json.
 	RawBodies     string          `json:"raw_bodies"`
+	Files         ManifestFiles   `json:"files"`
 	Totals        ManifestTotals  `json:"totals"`
 	Conversations []ManifestEntry `json:"conversations"`
+}
+
+// ManifestFiles locates the run-level sibling artifacts within the IR
+// directory. Consumers resolve tables through these fields, never by
+// hard-coding filenames.
+type ManifestFiles struct {
+	Facts string `json:"facts,omitempty"` // columnar per-invocation facts table (Parquet)
+	Turns string `json:"turns,omitempty"` // columnar deduplicated-turns table (Parquet)
 }
 
 // ToolInfo identifies the tool and version that produced the IR.

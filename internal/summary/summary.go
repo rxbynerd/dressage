@@ -374,6 +374,8 @@ func buildConversationSummary(id string, records []model.Record, renderBodies bo
 
 			// Preserve the raw record for faithful machine-readable export.
 			LatencyMs:      rec.LatencyMs,
+			StopReason:     rec.StopReason,
+			Correlation:    rec.Correlation,
 			FullIdentity:   rec.Identity,
 			Input:          rec.Input,
 			Output:         rec.Output,

@@ -14,6 +14,9 @@
     }
   },
   "raw_bodies": "omitted",
+  "files": {
+    "facts": "facts.parquet"
+  },
   "totals": {
     "conversations": 4,
     "invocations": 4,

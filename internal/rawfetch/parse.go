@@ -18,10 +18,13 @@ import (
 	"github.com/rxbynerd/dressage/internal/model"
 )
 
-// parsedRequest holds the fields extracted from one request body plus its raw
-// payload (retained because conversation reconstruction reads it in full).
+// parsedRequest holds the fields extracted from one request body. The payload
+// itself is NOT retained — records carry a file-backed lazy source instead, so
+// the resident set stays proportional to the number of requests rather than
+// the (quadratically growing) transcript bytes.
 type parsedRequest struct {
 	uuid        string // request-file basename without the .request.json suffix
+	path        string
 	mtime       time.Time
 	model       string
 	sessionID   string
@@ -30,7 +33,6 @@ type parsedRequest struct {
 	numMessages int
 	accountUUID string
 	deviceID    string
-	raw         json.RawMessage
 }
 
 // responseMeta is the lightweight index entry for one response body. The full
@@ -131,6 +133,7 @@ func parseRequests(ctx context.Context, paths []timedPath, workers int) ([]parse
 		blob := parseUserID(env.Metadata.UserID)
 		pr := parsedRequest{
 			uuid:        strings.TrimSuffix(filepath.Base(tp.path), ".request.json"),
+			path:        tp.path,
 			mtime:       tp.mtime,
 			model:       env.Model,
 			sessionID:   conversation.ExtractSessionID(provider, env.Model, data),
@@ -139,7 +142,6 @@ func parseRequests(ctx context.Context, paths []timedPath, workers int) ([]parse
 			numMessages: len(env.Messages),
 			accountUUID: blob.AccountUUID,
 			deviceID:    blob.DeviceID,
-			raw:         json.RawMessage(data),
 		}
 		mu.Lock()
 		out = append(out, pr)
@@ -445,9 +447,12 @@ func matchTerminals(reqs []parsedRequest, terminals []int, respIndex map[string]
 }
 
 // makeRecord assembles one normalized record from a parsed request, its
-// optional paired response, and its thread id. Token accounting, the API
-// request id, the response message id and the stop reason come from the
-// response; when unpaired only the request-side fields are populated.
+// optional paired response, and its thread id. Both bodies are file-backed
+// lazy sources — makeRecord performs no IO; payloads are read only when a
+// consumer actually needs them. Token accounting, the API request id, the
+// response message id and the stop reason come from the response envelope
+// decoded at index time; when unpaired only the request-side fields are
+// populated.
 func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Record {
 	rec := model.Record{
 		Provider:  provider,
@@ -455,6 +460,7 @@ func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Recor
 		RequestID: pr.uuid,
 		ModelID:   pr.model,
 		Operation: operation,
+		SessionID: pr.sessionID,
 		Identity: model.Identity{
 			Principal: pr.accountUUID,
 			Extra:     identityExtra(pr),
@@ -464,7 +470,10 @@ func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Recor
 			ThreadID:      threadID,
 			NumMessages:   pr.numMessages,
 		},
-		Input: model.Body{JSON: pr.raw, ContentType: "application/json"},
+		Input: model.Body{
+			Source:      fileBody{path: pr.path, messages: pr.numMessages},
+			ContentType: "application/json",
+		},
 	}
 	if rm == nil {
 		return rec
@@ -477,11 +486,10 @@ func makeRecord(pr parsedRequest, rm *responseMeta, threadID string) model.Recor
 	rec.Input.TokenCount = rm.inputTokens
 	rec.Input.CacheRead = rm.cacheRead
 	rec.Input.CacheWrite = rm.cacheWrite
-	rec.Output = model.Body{ContentType: "application/json", TokenCount: rm.outputTokens}
-	if body, err := os.ReadFile(rm.path); err == nil {
-		rec.Output.JSON = json.RawMessage(body)
-	} else {
-		log.Printf("%s: response body %s vanished before read; turn content omitted", provider, rm.path)
+	rec.Output = model.Body{
+		Source:      fileBody{path: rm.path, messages: -1},
+		ContentType: "application/json",
+		TokenCount:  rm.outputTokens,
 	}
 	return rec
 }

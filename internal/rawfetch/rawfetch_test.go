@@ -138,19 +138,30 @@ func TestFetchPairsChainAndTerminal(t *testing.T) {
 		if rec.Input.CacheRead != w.cacheR {
 			t.Errorf("record %d cacheRead = %d, want %d", i, rec.Input.CacheRead, w.cacheR)
 		}
-		if len(rec.Output.JSON) == 0 {
+		if !rec.Output.Present() {
 			t.Errorf("record %d has no paired response body", i)
 			continue
+		}
+		outJSON, err := rec.Output.Load()
+		if err != nil {
+			t.Fatalf("record %d output load: %v", i, err)
 		}
 		var got struct {
 			ID string `json:"id"`
 		}
-		if err := json.Unmarshal(rec.Output.JSON, &got); err != nil {
+		if err := json.Unmarshal(outJSON, &got); err != nil {
 			t.Errorf("record %d output not JSON: %v", i, err)
 		} else if got.ID != w.msgID {
 			t.Errorf("record %d output id = %q, want %q", i, got.ID, w.msgID)
 		}
-		if sid := conversation.ExtractSessionID(rec.Provider, rec.ModelID, rec.Input.JSON); sid != "sess-1" {
+		if rec.SessionID != "sess-1" {
+			t.Errorf("record %d SessionID = %q, want sess-1", i, rec.SessionID)
+		}
+		inJSON, err := rec.Input.Load()
+		if err != nil {
+			t.Fatalf("record %d input load: %v", i, err)
+		}
+		if sid := conversation.ExtractSessionID(rec.Provider, rec.ModelID, inJSON); sid != "sess-1" {
 			t.Errorf("record %d session = %q, want sess-1", i, sid)
 		}
 		if rec.Identity.Principal != "acct-1" {
@@ -238,8 +249,8 @@ func TestFetchTerminalUnpairedOutsideWindow(t *testing.T) {
 		t.Fatalf("got %d records, want 1", len(records))
 	}
 	rec := records[0]
-	if len(rec.Output.JSON) != 0 || rec.Output.TokenCount != 0 {
-		t.Errorf("expected unpaired terminal, got output len=%d tokens=%d", len(rec.Output.JSON), rec.Output.TokenCount)
+	if rec.Output.Present() || rec.Output.TokenCount != 0 {
+		t.Errorf("expected unpaired terminal, got output present=%v tokens=%d", rec.Output.Present(), rec.Output.TokenCount)
 	}
 	// Falls back to the request UUID when there is no paired response id.
 	if rec.RequestID != "solo" {

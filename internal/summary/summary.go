@@ -132,7 +132,7 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 	var noSessionRecords []model.Record
 
 	for _, rec := range dayRecords {
-		sid := conversation.ExtractSessionID(rec.Provider, rec.ModelID, rec.Input.JSON)
+		sid := sessionID(rec)
 		if sid != "" {
 			key := sessionKey{Provider: rec.Provider, SID: sid}
 			sessionGroups[key] = append(sessionGroups[key], rec)
@@ -192,6 +192,20 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 	})
 
 	return conversations, convIndex
+}
+
+// sessionID returns a record's session id: the fetcher-provided value when
+// present, otherwise extracted from the request body. Records with lazy bodies
+// are expected to arrive with SessionID pre-extracted, so grouping never loads
+// a lazy body just to read its session id.
+func sessionID(rec model.Record) string {
+	if rec.SessionID != "" {
+		return rec.SessionID
+	}
+	if rec.Input.Source != nil {
+		return ""
+	}
+	return conversation.ExtractSessionID(rec.Provider, rec.ModelID, rec.Input.JSON)
 }
 
 // buildConversationsTimeBased groups records using the
@@ -275,8 +289,8 @@ func buildConversationSummary(id string, records []model.Record) model.Conversat
 			Operation:    rec.Operation,
 			Status:       rec.Status,
 			ErrorCode:    rec.ErrorCode,
-			InputBody:    renderBody(rec.Input.JSON),
-			OutputBody:   renderBody(rec.Output.JSON),
+			InputBody:    renderBody(rec.Input),
+			OutputBody:   renderBody(rec.Output),
 			InputTokens:  rec.Input.TokenCount,
 			OutputTokens: rec.Output.TokenCount,
 			Identity:     rec.Identity.Principal,
@@ -342,10 +356,15 @@ func emptyStats() model.Stats {
 // rendered string.
 const maxRenderedBodyBytes = 32 * 1024
 
-// renderBody pretty-prints a raw body for the report, truncating the result to
-// maxRenderedBodyBytes with a marker noting the original size. Truncation is on
-// a rune boundary so the embedded HTML stays valid UTF-8.
-func renderBody(raw json.RawMessage) string {
+// renderBody pretty-prints a body's payload for the report, truncating the
+// result to maxRenderedBodyBytes with a marker noting the original size.
+// Truncation is on a rune boundary so the embedded HTML stays valid UTF-8. A
+// lazy body whose source fails to load renders a marker instead of content.
+func renderBody(b model.Body) string {
+	raw, err := b.Load()
+	if err != nil {
+		return fmt.Sprintf("(body unavailable: %v)", err)
+	}
 	s := prettyJSON(raw)
 	if len(s) <= maxRenderedBodyBytes {
 		return s

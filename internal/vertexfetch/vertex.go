@@ -125,7 +125,7 @@ func recordsFromRows(rows []vertexRow) (records []model.Record, missingUsage int
 		if !ok {
 			continue
 		}
-		if len(rec.Output.JSON) > 0 && rec.Input.TokenCount == 0 && rec.Output.TokenCount == 0 {
+		if rec.Output.Present() && rec.Input.TokenCount == 0 && rec.Output.TokenCount == 0 {
 			missingUsage++
 		}
 		records = append(records, rec)

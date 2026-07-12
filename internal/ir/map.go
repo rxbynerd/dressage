@@ -249,14 +249,20 @@ func mapInvocations(invs []model.Invocation) []InvocationIR {
 	return out
 }
 
-// mapBody translates a body, embedding its raw JSON inline.
+// mapBody translates a body, embedding its raw JSON inline. A lazy body whose
+// source fails to load is embedded without its payload (the omitempty json
+// field disappears), mirroring inlineJSON's handling of invalid bodies.
 func mapBody(b model.Body) BodyIR {
+	raw, err := b.Load()
+	if err != nil {
+		raw = nil
+	}
 	return BodyIR{
 		ContentType: b.ContentType,
 		TokenCount:  b.TokenCount,
 		CacheRead:   b.CacheRead,
 		CacheWrite:  b.CacheWrite,
-		JSON:        inlineJSON(b.JSON),
+		JSON:        inlineJSON(raw),
 	}
 }
 

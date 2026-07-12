@@ -108,6 +108,18 @@ func sessionSuffix(s string) string {
 	return ""
 }
 
+// bodyJSON loads a record body's payload, returning nil when the body is
+// absent or its lazy source fails (e.g. the backing file vanished). Parsers
+// treat nil as "no body", so a failed load degrades that record rather than
+// aborting reconstruction.
+func bodyJSON(b model.Body) json.RawMessage {
+	raw, err := b.Load()
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
 // parsedInvocation pairs a record with its parsed Messages API request body.
 type parsedInvocation struct {
 	rec *model.Record
@@ -137,7 +149,7 @@ func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
 	bestIdx := -1
 
 	for i := range sorted {
-		req := parseRequest(sorted[i].Input.JSON)
+		req := parseRequest(bodyJSON(sorted[i].Input))
 		if req == nil {
 			continue
 		}
@@ -167,9 +179,10 @@ func reconstructAnthropic(records []model.Record) *model.ConversationDetail {
 	}
 
 	// Reassemble the final assistant response from the output body.
-	finalTurn := reassembleOutput(best.rec.Output.JSON)
+	bestOutput := bodyJSON(best.rec.Output)
+	finalTurn := reassembleOutput(bestOutput)
 	if finalTurn != nil {
-		finalTurn.Metrics = extractMetricsFromLog(best.rec, best.rec.Output.JSON)
+		finalTurn.Metrics = extractMetricsFromLog(best.rec, bestOutput)
 		detail.Turns = append(detail.Turns, *finalTurn)
 	}
 
@@ -197,7 +210,7 @@ func attachMetrics(detail *model.ConversationDetail, invocations []parsedInvocat
 		if turn.Metrics != nil {
 			continue // already has metrics
 		}
-		turn.Metrics = extractMetricsFromLog(p.rec, p.rec.Output.JSON)
+		turn.Metrics = extractMetricsFromLog(p.rec, bodyJSON(p.rec.Output))
 	}
 }
 

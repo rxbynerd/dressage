@@ -5,6 +5,7 @@ package summary
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"log"
 	"sort"
 	"time"
@@ -20,15 +21,59 @@ import (
 const conversationGap = 5 * time.Minute
 
 // Summarize takes a slice of normalized invocation records and produces a
-// complete Report grouped by day and conversation.
+// complete Report grouped by day and conversation, with every conversation
+// materialized (reconstruction attached, display bodies rendered). Callers
+// that stream conversations out one at a time — and so never need the whole
+// materialized report in memory — use NewPlan directly instead.
 func Summarize(records []model.Record) *model.Report {
+	p := NewPlan(records)
+	for range p.Conversations(MaterializeOptions{RenderBodies: true, Retain: true}) {
+	}
+	return p.Report()
+}
+
+// Plan is the metadata-only grouping of records into days and conversations.
+// Building one performs no body loads: session ids come from Record.SessionID
+// (or, for inline bodies only, extraction from the raw request), and all stats
+// derive from record-level token accounting. Conversations are materialized —
+// reconstruction, rendered bodies — one at a time via Conversations.
+type Plan struct {
+	report *model.Report
+	convs  []convPlan
+}
+
+// convPlan is one planned conversation: its identity plus the records that
+// make it up, in day-major display order.
+type convPlan struct {
+	dayIdx    int
+	id        string
+	sessionID string // "" for gap-grouped conversations
+	records   []model.Record
+}
+
+// MaterializeOptions controls how Plan.Conversations materializes each
+// conversation.
+type MaterializeOptions struct {
+	// RenderBodies builds the 32 KiB-capped pretty-printed body strings used by
+	// the HTML report. Exporters that read raw bodies leave it false.
+	RenderBodies bool
+	// Retain keeps each materialized conversation in the Plan's report (the
+	// Summarize behavior). When false a conversation is dropped after its yield
+	// returns, bounding memory to one conversation at a time.
+	Retain bool
+}
+
+// NewPlan groups records into days and conversations without materializing
+// any conversation content.
+func NewPlan(records []model.Record) *Plan {
 	now := time.Now().UTC()
+	p := &Plan{report: &model.Report{
+		GeneratedAt: now,
+		TotalStats:  emptyStats(),
+	}}
 
 	if len(records) == 0 {
-		return &model.Report{
-			GeneratedAt: now,
-			TotalStats:  emptyStats(),
-		}
+		return p
 	}
 
 	// Sort all records by timestamp.
@@ -41,11 +86,6 @@ func Summarize(records []model.Record) *model.Report {
 	// Group records by UTC date.
 	dayBuckets := groupByDay(sorted)
 
-	// Build per-day summaries.
-	var days []model.DaySummary
-	totalStats := emptyStats()
-	globalConvIndex := 0
-
 	// Collect day keys and sort them.
 	dayKeys := make([]string, 0, len(dayBuckets))
 	for k := range dayBuckets {
@@ -53,33 +93,69 @@ func Summarize(records []model.Record) *model.Report {
 	}
 	sort.Strings(dayKeys)
 
-	for _, dayKey := range dayKeys {
+	globalConvIndex := 0
+	for dayIdx, dayKey := range dayKeys {
 		dayRecords := dayBuckets[dayKey]
 		dayDate := dayRecords[0].Timestamp.UTC().Truncate(24 * time.Hour)
 
-		conversations, nextIndex := buildConversations(dayRecords, dayKey, globalConvIndex)
+		convs, nextIndex := planConversations(dayRecords, dayKey, globalConvIndex)
 		globalConvIndex = nextIndex
+		for i := range convs {
+			convs[i].dayIdx = dayIdx
+		}
+		p.convs = append(p.convs, convs...)
 
 		dayStats := computeStats(dayRecords)
-		mergeStats(&totalStats, &dayStats)
+		mergeStats(&p.report.TotalStats, &dayStats)
 
-		days = append(days, model.DaySummary{
-			Date:          dayDate,
-			Stats:         dayStats,
-			Conversations: conversations,
+		p.report.Days = append(p.report.Days, model.DaySummary{
+			Date:  dayDate,
+			Stats: dayStats,
 		})
 	}
 
-	dateRange := model.DateRange{
+	p.report.DateRange = model.DateRange{
 		Start: sorted[0].Timestamp.UTC(),
 		End:   sorted[len(sorted)-1].Timestamp.UTC(),
 	}
+	return p
+}
 
-	return &model.Report{
-		GeneratedAt: now,
-		DateRange:   dateRange,
-		TotalStats:  totalStats,
-		Days:        days,
+// Report returns the plan's report. Before any Conversations drain it is a
+// skeleton — dates, stats and totals populated, per-day Conversations empty;
+// after a drain with Retain set it is the complete Summarize output.
+func (p *Plan) Report() *model.Report {
+	return p.report
+}
+
+// Conversations materializes the planned conversations one at a time, in the
+// report's display order (day-major, then start time). Session-grouped
+// conversations get full reconstruction attached; gap-grouped ones do not
+// (matching Summarize's historical behavior). The yielded pointer is only
+// valid for the duration of the yield unless opts.Retain is set.
+func (p *Plan) Conversations(opts MaterializeOptions) iter.Seq[*model.ConversationSummary] {
+	return func(yield func(*model.ConversationSummary) bool) {
+		for i := range p.convs {
+			cp := &p.convs[i]
+			cs := buildConversationSummary(cp.id, cp.records, opts.RenderBodies)
+			if cp.sessionID != "" {
+				cs.SessionID = cp.sessionID
+				if detail := conversation.Reconstruct(cp.records); detail != nil {
+					cs.Detail = detail
+					log.Printf("Reconstructed conversation %s: %d turns, session %s",
+						cp.id, len(detail.Turns), shortID(cp.sessionID))
+				}
+			}
+			if opts.Retain {
+				day := &p.report.Days[cp.dayIdx]
+				day.Conversations = append(day.Conversations, cs)
+				if !yield(&day.Conversations[len(day.Conversations)-1]) {
+					return
+				}
+			} else if !yield(&cs) {
+				return
+			}
+		}
 	}
 }
 
@@ -120,11 +196,14 @@ func shortID(s string) string {
 	return s
 }
 
-// buildConversations groups a day's records into conversations.
+// planConversations groups a day's records into planned conversations.
 // It first attempts session-based grouping using the session ID extracted from
 // the request body (used by Claude Code). Records without session IDs fall
 // back to the (provider, modelId, principal) + 5-minute gap heuristic.
-func buildConversations(dayRecords []model.Record, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
+// Conversation ids are assigned in grouping order (session groups first, then
+// gap groups) and the result is then sorted into display order by start time,
+// matching the historical Summarize output exactly.
+func planConversations(dayRecords []model.Record, dayKey string, startIndex int) ([]convPlan, int) {
 	// Partition records: those with session IDs vs those without. Session groups
 	// are keyed on (provider, session id) so that records from different
 	// providers are never merged even when their session ids collide.
@@ -142,7 +221,7 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 	}
 
 	convIndex := startIndex
-	var conversations []model.ConversationSummary
+	var convs []convPlan
 
 	// Process session-based groups, ordered by provider then session id for
 	// deterministic output. For single-provider input every provider is equal,
@@ -164,34 +243,27 @@ func buildConversations(dayRecords []model.Record, dayKey string, startIndex int
 			return groupRecords[i].Timestamp.Before(groupRecords[j].Timestamp)
 		})
 
-		convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
+		convs = append(convs, convPlan{
+			id:        fmt.Sprintf("conv-%s-%d", dayKey, convIndex),
+			sessionID: key.SID,
+			records:   groupRecords,
+		})
 		convIndex++
-		cs := buildConversationSummary(convID, groupRecords)
-		cs.SessionID = key.SID
-
-		// Attempt full conversation reconstruction.
-		detail := conversation.Reconstruct(groupRecords)
-		if detail != nil {
-			cs.Detail = detail
-			log.Printf("Reconstructed conversation %s: %d turns, session %s",
-				convID, len(detail.Turns), shortID(key.SID))
-		}
-		conversations = append(conversations, cs)
 	}
 
 	// Process remaining records without session IDs using the time-gap heuristic.
 	if len(noSessionRecords) > 0 {
-		gapConvs, nextIdx := buildConversationsTimeBased(noSessionRecords, dayKey, convIndex)
-		conversations = append(conversations, gapConvs...)
+		gapConvs, nextIdx := planConversationsTimeBased(noSessionRecords, dayKey, convIndex)
+		convs = append(convs, gapConvs...)
 		convIndex = nextIdx
 	}
 
 	// Sort conversations by start time for consistent display.
-	sort.Slice(conversations, func(i, j int) bool {
-		return conversations[i].StartTime.Before(conversations[j].StartTime)
+	sort.Slice(convs, func(i, j int) bool {
+		return convs[i].records[0].Timestamp.Before(convs[j].records[0].Timestamp)
 	})
 
-	return conversations, convIndex
+	return convs, convIndex
 }
 
 // sessionID returns a record's session id: the fetcher-provided value when
@@ -208,10 +280,10 @@ func sessionID(rec model.Record) string {
 	return conversation.ExtractSessionID(rec.Provider, rec.ModelID, rec.Input.JSON)
 }
 
-// buildConversationsTimeBased groups records using the
+// planConversationsTimeBased groups records using the
 // (provider, modelId, principal) + 5-minute gap heuristic. This is the
 // fallback for records without session IDs.
-func buildConversationsTimeBased(dayRecords []model.Record, dayKey string, startIndex int) ([]model.ConversationSummary, int) {
+func planConversationsTimeBased(dayRecords []model.Record, dayKey string, startIndex int) ([]convPlan, int) {
 	groups := make(map[groupKey][]model.Record)
 	for _, rec := range dayRecords {
 		k := groupKey{Provider: rec.Provider, ModelID: rec.ModelID, Principal: rec.Identity.Principal}
@@ -233,7 +305,15 @@ func buildConversationsTimeBased(dayRecords []model.Record, dayKey string, start
 	})
 
 	convIndex := startIndex
-	var conversations []model.ConversationSummary
+	var convs []convPlan
+
+	appendConv := func(records []model.Record) {
+		convs = append(convs, convPlan{
+			id:      fmt.Sprintf("conv-%s-%d", dayKey, convIndex),
+			records: records,
+		})
+		convIndex++
+	}
 
 	for _, k := range keys {
 		groupRecords := groups[k]
@@ -244,26 +324,24 @@ func buildConversationsTimeBased(dayRecords []model.Record, dayKey string, start
 		var conv []model.Record
 		for i, rec := range groupRecords {
 			if i > 0 && rec.Timestamp.Sub(groupRecords[i-1].Timestamp) > conversationGap {
-				convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
-				convIndex++
-				conversations = append(conversations, buildConversationSummary(convID, conv))
+				appendConv(conv)
 				conv = nil
 			}
 			conv = append(conv, rec)
 		}
 		if len(conv) > 0 {
-			convID := fmt.Sprintf("conv-%s-%d", dayKey, convIndex)
-			convIndex++
-			conversations = append(conversations, buildConversationSummary(convID, conv))
+			appendConv(conv)
 		}
 	}
 
-	return conversations, convIndex
+	return convs, convIndex
 }
 
 // buildConversationSummary creates a ConversationSummary from a slice of
 // chronologically ordered invocation records belonging to one conversation.
-func buildConversationSummary(id string, records []model.Record) model.ConversationSummary {
+// renderBodies controls whether the display body strings for the HTML report
+// are built; exporters that read raw bodies skip that cost.
+func buildConversationSummary(id string, records []model.Record, renderBodies bool) model.ConversationSummary {
 	summary := model.ConversationSummary{
 		ID:           id,
 		Provider:     records[0].Provider,
@@ -282,15 +360,13 @@ func buildConversationSummary(id string, records []model.Record) model.Conversat
 			summary.ErrorCount++
 		}
 
-		invocations = append(invocations, model.Invocation{
+		inv := model.Invocation{
 			Timestamp:    rec.Timestamp,
 			RequestID:    rec.RequestID,
 			ModelID:      rec.ModelID,
 			Operation:    rec.Operation,
 			Status:       rec.Status,
 			ErrorCode:    rec.ErrorCode,
-			InputBody:    renderBody(rec.Input),
-			OutputBody:   renderBody(rec.Output),
 			InputTokens:  rec.Input.TokenCount,
 			OutputTokens: rec.Output.TokenCount,
 			Identity:     rec.Identity.Principal,
@@ -301,7 +377,12 @@ func buildConversationSummary(id string, records []model.Record) model.Conversat
 			Input:          rec.Input,
 			Output:         rec.Output,
 			ProviderExtras: rec.ProviderExtras,
-		})
+		}
+		if renderBodies {
+			inv.InputBody = renderBody(rec.Input)
+			inv.OutputBody = renderBody(rec.Output)
+		}
+		invocations = append(invocations, inv)
 	}
 	summary.Invocations = invocations
 	return summary

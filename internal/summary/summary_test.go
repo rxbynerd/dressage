@@ -298,3 +298,97 @@ func TestPrettyJSON(t *testing.T) {
 		})
 	}
 }
+
+// planCountingSource is a BodySource double that counts loads, for asserting
+// grouping does no body IO.
+type planCountingSource struct {
+	data  json.RawMessage
+	loads *int
+}
+
+func (s planCountingSource) Load() (json.RawMessage, error) {
+	*s.loads++
+	return s.data, nil
+}
+
+// TestNewPlanMatchesSummarize asserts the Plan skeleton carries the same stats
+// and day structure as the fully materialized report, and that streaming the
+// conversations (without retention) yields them in the report's display order.
+func TestNewPlanMatchesSummarize(t *testing.T) {
+	base := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	input := `{"metadata":{"user_id":"user_h_account__session_planned"},"messages":[{"role":"user","content":"hi"}]}`
+	records := []model.Record{
+		makeLog("model-a", "arn:a", base, 10, 5),
+		makeLog("model-a", "arn:a", base.Add(20*time.Minute), 20, 10), // beyond gap: second conversation
+		makeLog("model-b", "arn:b", base.Add(24*time.Hour), 30, 15),   // second day
+	}
+	records[0].Input.JSON = json.RawMessage(input) // session-grouped conversation
+
+	full := Summarize(records)
+	plan := NewPlan(records)
+	skeleton := plan.Report()
+
+	if skeleton.TotalStats.InvocationCount != full.TotalStats.InvocationCount ||
+		skeleton.TotalStats.InputTokens != full.TotalStats.InputTokens ||
+		skeleton.TotalStats.OutputTokens != full.TotalStats.OutputTokens {
+		t.Errorf("skeleton totals = %+v, want %+v", skeleton.TotalStats, full.TotalStats)
+	}
+	if len(skeleton.Days) != len(full.Days) {
+		t.Fatalf("skeleton days = %d, want %d", len(skeleton.Days), len(full.Days))
+	}
+	for i := range skeleton.Days {
+		if !skeleton.Days[i].Date.Equal(full.Days[i].Date) {
+			t.Errorf("day[%d] date = %v, want %v", i, skeleton.Days[i].Date, full.Days[i].Date)
+		}
+		if len(skeleton.Days[i].Conversations) != 0 {
+			t.Errorf("day[%d] skeleton has %d conversations before drain, want 0", i, len(skeleton.Days[i].Conversations))
+		}
+	}
+
+	// Streaming yield order must match the materialized report's display order.
+	var want []string
+	for _, day := range full.Days {
+		for _, cs := range day.Conversations {
+			want = append(want, cs.ID)
+		}
+	}
+	var got []string
+	for cs := range plan.Conversations(MaterializeOptions{}) {
+		got = append(got, cs.ID)
+		if cs.Invocations[0].InputBody != "" || cs.Invocations[0].OutputBody != "" {
+			t.Errorf("conversation %s has rendered bodies without RenderBodies", cs.ID)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("streamed %d conversations, want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Errorf("stream order[%d] = %s, want %s", i, got[i], want[i])
+		}
+	}
+	// The plan's report must remain a skeleton after a non-retaining drain.
+	for i := range skeleton.Days {
+		if len(skeleton.Days[i].Conversations) != 0 {
+			t.Errorf("day[%d] gained %d conversations from non-retaining drain", i, len(skeleton.Days[i].Conversations))
+		}
+	}
+}
+
+// TestNewPlanNoBodyLoads asserts grouping performs zero body loads when the
+// fetcher pre-extracted the session id (the lazy-body contract).
+func TestNewPlanNoBodyLoads(t *testing.T) {
+	base := time.Date(2024, 3, 1, 9, 0, 0, 0, time.UTC)
+	var loads int
+	rec := makeLog("model-a", "arn:a", base, 10, 5)
+	rec.SessionID = "sess-lazy"
+	rec.Input = model.Body{Source: planCountingSource{data: json.RawMessage(`{"messages":[]}`), loads: &loads}}
+
+	plan := NewPlan([]model.Record{rec})
+	if loads != 0 {
+		t.Errorf("grouping loaded %d bodies, want 0", loads)
+	}
+	if len(plan.convs) != 1 || plan.convs[0].sessionID != "sess-lazy" {
+		t.Fatalf("plan convs = %+v, want one session-grouped conversation", plan.convs)
+	}
+}

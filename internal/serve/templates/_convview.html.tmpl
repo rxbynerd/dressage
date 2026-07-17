@@ -1,0 +1,89 @@
+{{define "convview"}}
+<div class="chat-container">
+
+  {{if .SystemPrompt}}
+  <details class="chat-section">
+    <summary><span class="arrow">&#9654;</span> System Prompt ({{len .SystemPrompt}} chars)</summary>
+    <div class="section-body">{{.SystemPrompt}}</div>
+  </details>
+  {{end}}
+
+  {{if .Tools}}
+  <details class="chat-section">
+    <summary><span class="arrow">&#9654;</span> Available Tools ({{len .Tools}})</summary>
+    <div class="tool-list">
+      {{range .Tools}}
+      <div class="tool-list-item">
+        <span class="tool-list-name">{{.Name}}</span>
+        <span class="tool-list-desc">{{truncate .Description 200}}</span>
+      </div>
+      {{end}}
+    </div>
+  </details>
+  {{end}}
+
+  {{range .Turns}}
+  <div class="chat-msg {{.Role}}">
+    <div class="chat-role">{{.Role}}</div>
+
+    {{range .Blocks}}
+      {{if eq .Type "text"}}
+        {{if .Text}}
+        <div class="content-block block-text">{{.Text}}</div>
+        {{end}}
+
+      {{else if eq .Type "thinking"}}
+        <details class="content-block block-thinking">
+          <summary><span class="arrow">&#9654;</span> Thinking ({{len .Text}} chars)</summary>
+          <div class="thinking-content">{{.Text}}</div>
+        </details>
+
+      {{else if eq .Type "tool_use"}}
+        <details class="content-block block-tool">
+          <summary>
+            <span class="arrow">&#9654;</span>
+            <span class="tool-badge">{{.ToolName}}</span>
+            <span class="tool-id">{{.ToolID}}</span>
+          </summary>
+          <div class="tool-body">{{prettyJSON .ToolInput}}</div>
+        </details>
+
+      {{else if eq .Type "tool_result"}}
+        <details class="content-block block-result{{if .IsError}} error-result{{end}}">
+          <summary>
+            <span class="arrow">&#9654;</span>
+            <span class="result-label">{{if .IsError}}Error{{else}}Result{{end}} for {{.ToolID}}</span>
+          </summary>
+          <div class="result-body">{{.ResultContent}}</div>
+        </details>
+
+      {{else if eq .Type "media"}}
+        <div class="content-block block-media">
+          <span class="media-label">media</span>
+          {{if .MimeType}}<span class="media-mime">{{.MimeType}}</span>{{end}}
+          {{if .FileURI}}<span class="media-uri">{{.FileURI}}</span>{{else if .Inline}}<span class="media-inline">inline{{if gt .ByteSize 0}} &middot; {{formatInt .ByteSize}} bytes{{end}}</span>{{end}}
+        </div>
+
+      {{else}}
+        {{if .Text}}<div class="content-block block-text">{{.Text}}</div>{{end}}
+      {{end}}
+    {{end}}
+
+    {{with .Metrics}}
+    <div class="turn-metrics">
+      <div><span class="metric-label">time</span> <span class="metric-value">{{.Timestamp.Format "15:04:05"}}</span></div>
+      <div><span class="metric-label">in</span> <span class="metric-value">{{formatInt .InputTokens}}</span></div>
+      <div><span class="metric-label">out</span> <span class="metric-value">{{formatInt .OutputTokens}}</span></div>
+      {{if gt .CacheReadTokens 0}}<div><span class="metric-label">cache-read</span> <span class="metric-value">{{formatInt .CacheReadTokens}}</span></div>{{end}}
+      {{if gt .CacheWriteTokens 0}}<div><span class="metric-label">cache-write</span> <span class="metric-value">{{formatInt .CacheWriteTokens}}</span></div>{{end}}
+      {{if gt .LatencyMs 0}}<div><span class="metric-label">latency</span> <span class="metric-value">{{durationMs .LatencyMs}}</span></div>{{end}}
+      {{if gt .FirstByteMs 0}}<div><span class="metric-label">ttfb</span> <span class="metric-value">{{durationMs .FirstByteMs}}</span></div>{{end}}
+      {{if .StopReason}}<div><span class="metric-label">stop</span> <span class="metric-value">{{.StopReason}}</span></div>{{end}}
+      {{if .ModelID}}<div><span class="metric-label">model</span> <span class="metric-value">{{shortModel .ModelID}}</span></div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+</div>
+{{end}}

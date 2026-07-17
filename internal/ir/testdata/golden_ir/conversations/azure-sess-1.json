@@ -1,5 +1,5 @@
 {
-  "schema_version": "dressage.ir/1.0",
+  "schema_version": "dressage.ir/1.1",
   "id": "azure-sess-1",
   "display_id": "conv-20240115-0",
   "session_id": "azure-sess-1",
@@ -88,58 +88,13 @@
         "content_type": "application/json",
         "token_count": 20,
         "cache_read": 0,
-        "cache_write": 0,
-        "json": {
-          "user": "user_hash__session_azure-sess-1",
-          "messages": [
-            {
-              "role": "system",
-              "content": "You are concise."
-            },
-            {
-              "role": "user",
-              "content": "What is 2+2?"
-            }
-          ],
-          "tools": [
-            {
-              "type": "function",
-              "function": {
-                "name": "calc",
-                "description": "does math",
-                "parameters": {
-                  "type": "object",
-                  "properties": {
-                    "expr": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        }
+        "cache_write": 0
       },
       "output": {
         "content_type": "application/json",
         "token_count": 1,
         "cache_read": 0,
-        "cache_write": 0,
-        "json": {
-          "choices": [
-            {
-              "message": {
-                "role": "assistant",
-                "content": "4"
-              },
-              "finish_reason": "stop"
-            }
-          ],
-          "usage": {
-            "prompt_tokens": 20,
-            "completion_tokens": 1
-          }
-        }
+        "cache_write": 0
       }
     }
   ]

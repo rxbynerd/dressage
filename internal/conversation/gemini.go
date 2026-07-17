@@ -116,7 +116,7 @@ func reconstructGemini(records []model.Record) *model.ConversationDetail {
 	var all []parsedGeminiInvocation
 	bestIdx := -1
 	for i := range sorted {
-		req := parseGeminiRequest(sorted[i].Input.JSON)
+		req := parseGeminiRequest(bodyJSON(sorted[i].Input))
 		if req == nil {
 			continue
 		}
@@ -150,7 +150,7 @@ func reconstructGemini(records []model.Record) *model.ConversationDetail {
 	}
 
 	// Append the final model response from the output body.
-	finalTurn, stopReason, usage := reassembleGeminiOutput(best.rec.Output.JSON)
+	finalTurn, stopReason, usage := reassembleGeminiOutput(bodyJSON(best.rec.Output))
 	if finalTurn != nil && len(finalTurn.Blocks) > 0 {
 		finalTurn.Metrics = geminiMetrics(best.rec, stopReason, usage)
 		detail.Turns = append(detail.Turns, *finalTurn)
@@ -175,7 +175,7 @@ func attachGeminiMetrics(detail *model.ConversationDetail, invocations []parsedG
 		if turn.Role != "assistant" || turn.Metrics != nil {
 			continue
 		}
-		_, stopReason, usage := reassembleGeminiOutput(p.rec.Output.JSON)
+		_, stopReason, usage := reassembleGeminiOutput(bodyJSON(p.rec.Output))
 		turn.Metrics = geminiMetrics(p.rec, stopReason, usage)
 	}
 }

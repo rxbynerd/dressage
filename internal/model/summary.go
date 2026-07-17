@@ -51,7 +51,8 @@ type ConversationSummary struct {
 	OutputTokens int64
 	ErrorCount   int
 	Invocations  []Invocation
-	Detail       *ConversationDetail // reconstructed conversation (nil if not available)
+	Detail       *ConversationDetail // reconstructed main-thread conversation (nil if not available)
+	Sidechains   []Thread            // reconstructed sidechain threads (subagents); empty when none or when Detail is nil
 }
 
 // Invocation is a single request/response pair. It carries both a display copy
@@ -75,6 +76,8 @@ type Invocation struct {
 	// used by the HTML report but let the IR exporter embed inline JSON bodies
 	// and full per-invocation metadata without re-fetching the source logs.
 	LatencyMs      int64
+	StopReason     string      // response stop/finish reason, when the fetcher lifted it
+	Correlation    Correlation // provider-assigned message/thread linkage, when available
 	FullIdentity   Identity
 	Input          Body            // raw input body + token/cache accounting
 	Output         Body            // raw output body + token/cache accounting

@@ -16,9 +16,10 @@ import (
 const rfc3339 = time.RFC3339
 
 // mapConversation translates a model.ConversationSummary into a ConversationIR.
-// It is pure (no IO): all translation logic lives here so Export only has to
-// concern itself with writing files.
-func mapConversation(cs model.ConversationSummary) ConversationIR {
+// It performs no direct IO: all translation logic lives here so the Exporter
+// only has to concern itself with writing files (body payloads, when the
+// options embed them, load through the model's own Body.Load indirection).
+func mapConversation(cs model.ConversationSummary, opts ExportOptions) ConversationIR {
 	conv := ConversationIR{
 		SchemaVersion: SchemaVersion,
 		ID:            stableID(cs),
@@ -30,7 +31,7 @@ func mapConversation(cs model.ConversationSummary) ConversationIR {
 		StartTime:     cs.StartTime,
 		EndTime:       cs.EndTime,
 		Stats:         mapStats(cs),
-		Invocations:   mapInvocations(cs.Invocations),
+		Invocations:   mapInvocations(cs.Invocations, opts),
 	}
 	if cs.Detail != nil {
 		conv.Conversation = mapDetail(cs.Detail)
@@ -228,8 +229,9 @@ func mapMetrics(m *model.TurnMetrics) *MetricsIR {
 	}
 }
 
-// mapInvocations translates the raw invocations, embedding bodies inline.
-func mapInvocations(invs []model.Invocation) []InvocationIR {
+// mapInvocations translates the raw invocations, embedding body payloads only
+// when the export options ask for them.
+func mapInvocations(invs []model.Invocation, opts ExportOptions) []InvocationIR {
 	out := make([]InvocationIR, 0, len(invs))
 	for _, inv := range invs {
 		out = append(out, InvocationIR{
@@ -241,23 +243,34 @@ func mapInvocations(invs []model.Invocation) []InvocationIR {
 			ErrorCode:      inv.ErrorCode,
 			Identity:       mapIdentity(inv.FullIdentity),
 			LatencyMs:      inv.LatencyMs,
-			Input:          mapBody(inv.Input),
-			Output:         mapBody(inv.Output),
+			Input:          mapBody(inv.Input, opts.RawBodies),
+			Output:         mapBody(inv.Output, opts.RawBodies),
 			ProviderExtras: inlineJSON(inv.ProviderExtras),
 		})
 	}
 	return out
 }
 
-// mapBody translates a body, embedding its raw JSON inline.
-func mapBody(b model.Body) BodyIR {
-	return BodyIR{
+// mapBody translates a body's accounting, embedding its raw JSON inline only
+// when includeRaw is set. A lazy body whose source fails to load is embedded
+// without its payload (the omitempty json field disappears), mirroring
+// inlineJSON's handling of invalid bodies.
+func mapBody(b model.Body, includeRaw bool) BodyIR {
+	out := BodyIR{
 		ContentType: b.ContentType,
 		TokenCount:  b.TokenCount,
 		CacheRead:   b.CacheRead,
 		CacheWrite:  b.CacheWrite,
-		JSON:        inlineJSON(b.JSON),
 	}
+	if !includeRaw {
+		return out
+	}
+	raw, err := b.Load()
+	if err != nil {
+		raw = nil
+	}
+	out.JSON = inlineJSON(raw)
+	return out
 }
 
 // mapIdentity translates a normalized identity.

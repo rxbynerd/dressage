@@ -210,7 +210,7 @@ type timedPath struct {
 func countPaired(records []model.Record) int {
 	n := 0
 	for i := range records {
-		if len(records[i].Output.JSON) > 0 {
+		if records[i].Output.Present() {
 			n++
 		}
 	}

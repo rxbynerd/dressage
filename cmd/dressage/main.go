@@ -31,11 +31,12 @@ var version = "dev"
 
 // commonFlags holds the provider-neutral flags shared by every subcommand.
 type commonFlags struct {
-	start  string
-	end    string
-	output string
-	format string // output format: "html", "ir", or "both"
-	irDir  string // IR output directory (defaults to --output with its extension replaced by .ir)
+	start     string
+	end       string
+	output    string
+	format    string // output format: "html", "ir", or "both"
+	irDir     string // IR output directory (defaults to --output with its extension replaced by .ir)
+	rawBodies string // raw bodies in the IR: "omit" (default) or "embed"
 }
 
 func main() {
@@ -81,6 +82,7 @@ Choose a provider subcommand (e.g. "dressage bedrock") to ingest logs.`,
 	pf.StringVar(&common.output, "output", "report.html", "Output HTML file path")
 	pf.StringVar(&common.format, "format", "html", "Output format: html, ir, or both")
 	pf.StringVar(&common.irDir, "ir-dir", "", "IR output directory (default: --output with its extension replaced by .ir)")
+	pf.StringVar(&common.rawBodies, "raw-bodies", "omit", "Raw request/response bodies in the IR: omit or embed (embedding is quadratic for providers that resend the transcript every turn)")
 
 	return root
 }
@@ -325,6 +327,14 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 	default:
 		return fmt.Errorf("invalid --format %q: expected one of html, ir, both", format)
 	}
+	var embedRawBodies bool
+	switch common.rawBodies {
+	case "", "omit": // "" = flag default when commonFlags is constructed directly
+	case "embed":
+		embedRawBodies = true
+	default:
+		return fmt.Errorf("invalid --raw-bodies %q: expected omit or embed", common.rawBodies)
+	}
 
 	// Parse date filters.
 	var startDate, endDate time.Time
@@ -354,22 +364,21 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 		log.Println("No invocation logs found for the specified criteria.")
 	}
 
-	// Summarize.
+	// Group records into days and conversations without materializing any
+	// conversation content yet.
 	log.Println("Building summary...")
-	rpt := summary.Summarize(records)
+	plan := summary.NewPlan(records)
+	rpt := plan.Report()
 	rpt.Title = title
 
-	// Generate the HTML report unless the format is IR-only.
-	if format == "html" || format == "both" {
-		log.Printf("Generating report to %s...", common.output)
-		if err := report.Generate(rpt, common.output); err != nil {
-			return fmt.Errorf("generating report: %w", err)
-		}
-	}
+	htmlRequested := format == "html" || format == "both"
+	irRequested := format == "ir" || format == "both"
 
-	// Export the IR directory when requested.
+	// Open the streaming IR exporter before materialization so conversations
+	// flow straight to disk.
 	var irDir string
-	if format == "ir" || format == "both" {
+	var exporter *ir.Exporter
+	if irRequested {
 		irDir = resolveIRDir(common)
 		src := ir.SourceInfo{
 			Provider: provider,
@@ -380,18 +389,46 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 			},
 		}
 		log.Printf("Exporting IR to %s...", irDir)
-		if err := ir.Export(rpt, irDir, src); err != nil {
+		exporter, err = ir.NewExporter(irDir, src, rpt.GeneratedAt, ir.ExportOptions{RawBodies: embedRawBodies})
+		if err != nil {
 			return fmt.Errorf("exporting IR: %w", err)
+		}
+	}
+
+	// Materialize conversations in one pass shared by both outputs. The HTML
+	// report needs every conversation rendered and retained in the report;
+	// an IR-only run retains nothing, so memory stays bounded to one
+	// conversation at a time.
+	convCount := 0
+	opts := summary.MaterializeOptions{RenderBodies: htmlRequested, Retain: htmlRequested}
+	for cs := range plan.Conversations(opts) {
+		convCount++
+		if exporter != nil {
+			if err := exporter.WriteConversation(*cs); err != nil {
+				return fmt.Errorf("exporting IR: %w", err)
+			}
+		}
+	}
+	if exporter != nil {
+		if err := exporter.Finish(rpt); err != nil {
+			return fmt.Errorf("exporting IR: %w", err)
+		}
+	}
+
+	if htmlRequested {
+		log.Printf("Generating report to %s...", common.output)
+		if err := report.Generate(rpt, common.output); err != nil {
+			return fmt.Errorf("generating report: %w", err)
 		}
 	}
 
 	// Print summary to stdout.
 	fmt.Println()
-	if format == "html" || format == "both" {
+	if htmlRequested {
 		fmt.Printf("Report written to %s\n", common.output)
 	}
 	if irDir != "" {
-		fmt.Printf("IR written to %s (%d conversation file(s))\n", irDir, ir.ConversationCount(rpt))
+		fmt.Printf("IR written to %s (%d conversation file(s))\n", irDir, convCount)
 	}
 	fmt.Printf("  Date range:   %s to %s\n", rpt.DateRange.Start.Format(dateFormat), rpt.DateRange.End.Format(dateFormat))
 	fmt.Printf("  Invocations:  %d\n", rpt.TotalStats.InvocationCount)
@@ -399,7 +436,7 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 	fmt.Printf("  Output tokens: %d\n", rpt.TotalStats.OutputTokens)
 	fmt.Printf("  Errors:       %d\n", rpt.TotalStats.ErrorCount)
 	fmt.Printf("  Days:         %d\n", len(rpt.Days))
-	fmt.Printf("  Conversations: %d\n", ir.ConversationCount(rpt))
+	fmt.Printf("  Conversations: %d\n", convCount)
 
 	return nil
 }

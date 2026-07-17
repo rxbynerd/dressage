@@ -1,5 +1,5 @@
 {
-  "schema_version": "dressage.ir/1.0",
+  "schema_version": "dressage.ir/1.1",
   "generated_at": "2024-01-20T12:00:00Z",
   "tool": {
     "name": "dressage",
@@ -12,6 +12,11 @@
       "start": "2024-01-15",
       "end": "2024-01-15"
     }
+  },
+  "raw_bodies": "omitted",
+  "files": {
+    "facts": "facts.parquet",
+    "turns": "turns.parquet"
   },
   "totals": {
     "conversations": 4,

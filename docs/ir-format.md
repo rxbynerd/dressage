@@ -16,6 +16,8 @@ The IR is a directory:
 ```
 report.ir/
 ├── manifest.json                    # run metadata + index of all conversations
+├── facts.parquet                    # columnar per-invocation facts table
+├── turns.parquet                    # columnar deduplicated-turns table
 └── conversations/
     ├── <id>.json                    # one self-contained conversation IR per file
     ├── <id>.json
@@ -30,36 +32,72 @@ report.ir/
   (see [Stable conversation id](#stable-conversation-id)); always resolve a
   conversation's file via the manifest `file` field rather than rebuilding the
   path from `id`.
+- `facts.parquet` and `turns.parquet` are zstd-compressed Parquet tables for
+  analytical engines (e.g. DuckDB — see the
+  [cookbook](duckdb-cookbook.md)): one row per invocation and one row per
+  deduplicated conversation turn respectively. Resolve them via the manifest
+  `files` field, never by hard-coding names.
 
 This suits a fan-out workflow: a batch judge reads the manifest, hands one
-conversation file to one worker, and writes results keyed by the same `id`.
+conversation file to one worker, and writes results keyed by the same `id` —
+while aggregate questions (spend, cache hit rates, session shapes, tool
+frequency, full-text search) run against the two Parquet tables without
+opening any JSON.
 
 ## Conventions
 
 - **Encoding.** UTF-8 JSON, indented two spaces, one trailing newline per file.
 - **Field names.** `snake_case` throughout.
 - **Timestamps.** RFC 3339 / ISO 8601 in UTC (e.g. `2026-05-03T09:14:02Z`).
-- **Raw bodies are inline JSON.** Provider request/response bodies and tool
-  input/parameters schemas embed as JSON values, never as escaped strings, so a
-  conversation file is itself valid JSON and a consumer can walk directly into a
-  request body.
+- **Raw bodies are opt-in inline JSON.** When embedded (see
+  [`raw_bodies`](#raw-bodies-are-opt-in)), provider request/response bodies and
+  tool input/parameters schemas embed as JSON values, never as escaped strings,
+  so a conversation file is itself valid JSON and a consumer can walk directly
+  into a request body.
 - **Omitted fields.** Fields documented as optional are omitted when empty
   (Go `omitempty`); a consumer must treat an absent field as its zero value.
   `conversation` is the sole exception: it is always present, and is explicitly
   `null` when the conversation was not reconstructed (see below).
-- **Determinism.** For a given report the output is byte-stable across runs: the
-  manifest index is sorted by `start_time` then `id`, and file names derive
-  deterministically from the `id` via the filesystem-safe transform below.
+- **Determinism.** For a given report the JSON output is byte-stable across
+  runs: the manifest index is sorted by `start_time` then `id`, and file names
+  derive deterministically from the `id` via the filesystem-safe transform
+  below. The Parquet tables are **content**-deterministic (same rows in the
+  same order) but not byte-stable across dressage releases, because the file
+  footer embeds the writing library's version.
 
 ## Schema version
 
 Every file embeds `schema_version`, a string of the form
-`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.0`.
+`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.1`.
 
 - Additive, backward-compatible changes (new optional fields, new block types)
   bump **MINOR**.
 - Breaking changes (renamed/removed fields, changed semantics) bump **MAJOR**.
 - Consumers should accept any matching **MAJOR** and **ignore unknown fields**.
+
+Version history:
+
+- **1.1** — raw request/response bodies became **opt-in** (the manifest's
+  `raw_bodies` field records the choice; the body `json` fields were always
+  optional); added the `files` manifest field and the `facts.parquet` /
+  `turns.parquet` tables.
+- **1.0** — initial schema.
+
+## Raw bodies are opt-in
+
+By default an export **omits** the verbatim request/response payloads
+(`invocations[].input.json` / `output.json`): for resend-style captures (the
+`claude` provider, where the client re-sends the whole running transcript on
+every turn) embedded bodies grow quadratically with conversation length —
+multi-GB IR directories for a single day. Token/cache accounting on every
+invocation, the reconstructed `conversation` view, and both Parquet tables are
+unaffected; the deduplicated turns (main thread **and** sidechains) carry the
+conversation content.
+
+Pass `--raw-bodies embed` to restore verbatim embedding (uniformly, for every
+provider). The manifest records the mode in `raw_bodies` (`"embedded"` |
+`"omitted"`); a consumer that needs exact wire payloads must check it before
+relying on the body `json` fields.
 
 ## Stable conversation id
 
@@ -91,10 +129,12 @@ yourself.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.0"`. |
+| `schema_version` | string | `"dressage.ir/1.1"`. |
 | `generated_at` | timestamp | When the report was produced. |
 | `tool` | object | `{ "name": "dressage", "version": "<build version>" }`. |
 | `source` | object | Run provenance (below). |
+| `raw_bodies` | string | `"embedded"` or `"omitted"` — whether invocation payload `json` fields are present (see [Raw bodies are opt-in](#raw-bodies-are-opt-in)). |
+| `files` | object | Run-level sibling artifacts: `{ "facts": "facts.parquet", "turns": "turns.parquet" }`. Resolve tables through this field. |
 | `totals` | object | Report-wide aggregates (below). |
 | `conversations` | array | Index entries, sorted by `start_time` then `id`. |
 
@@ -102,7 +142,7 @@ yourself.
 
 | Field | Type | Notes |
 |---|---|---|
-| `provider` | string | Dominant provider in this run (`bedrock`, `azure`, `vertex`). |
+| `provider` | string | Dominant provider in this run (`bedrock`, `azure`, `vertex`, `claude`). |
 | `command` | string | The command line that produced the run. Values of sensitive flags (`--credentials`, `--profile`, `--subscription`, `--workspace`, `--tenant`, `--account`) are replaced with `<redacted>`. |
 | `date_range` | object | `{ "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" }`; either may be empty for an unbounded edge. |
 
@@ -140,7 +180,7 @@ Top-level fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.0"`. |
+| `schema_version` | string | `"dressage.ir/1.1"`. |
 | `id` | string | Stable id (matches the file name and the manifest entry). |
 | `display_id` | string | Internal `conv-…` id for cross-referencing the HTML report. |
 | `session_id` | string | Omitted when absent. |
@@ -243,9 +283,11 @@ in the request, `inline` is `true` and `byte_size` is the decoded byte length
 
 ### Layer 2 — `invocations` (ground truth)
 
-Every underlying request/response pair, including the **raw provider JSON bodies
-embedded inline and verbatim**. An extractor that needs the exact wire payload
-(full tool schema, an unmodelled field, the literal streamed chunks) reads here.
+Every underlying request/response pair with its token accounting and, **when
+the export embedded raw bodies** (`--raw-bodies embed`; check the manifest's
+`raw_bodies`), the raw provider JSON bodies inline and verbatim. An extractor
+that needs the exact wire payload (full tool schema, an unmodelled field, the
+literal streamed chunks) reads here after confirming the export embedded it.
 Always populated, even when `conversation` is `null`.
 
 `invocations[]`:
@@ -272,7 +314,59 @@ Always populated, even when `conversation` is `null`.
 | `token_count` | integer | |
 | `cache_read` | integer | |
 | `cache_write` | integer | `0` for providers without a cache-write counter. |
-| `json` | inline JSON | The raw body, verbatim. For streamed responses this is the array of chunks. Omitted when the raw body was absent or not valid JSON. |
+| `json` | inline JSON | The raw body, verbatim. For streamed responses this is the array of chunks. Omitted when the export did not embed raw bodies (the default — see manifest `raw_bodies`), or when the raw body was absent or not valid JSON. |
+
+## `facts.parquet` — per-invocation facts
+
+One row per invocation — errored and sidechain invocations included — sorted
+by (`timestamp`, `request_id`, `request_uuid`). This is the table analytical
+queries scan; it never contains conversation content. Absent values are the
+zero value (`''` / `0`), not SQL NULL, so filter with `<> ''` / `> 0`.
+
+| Column | Type | Notes |
+|---|---|---|
+| `conversation_id` | string | Joins to the manifest `conversations[].id` and to `turns.parquet`. |
+| `session_id` | string | `''` when the record carried none. |
+| `provider` | string | |
+| `model_id` | string | |
+| `timestamp` | timestamp | |
+| `request_id` | string | Provider/API request id. |
+| `operation` | string | |
+| `status` | string | Raw provider status; `''` for unpaired claude requests. |
+| `error_code` | string | Non-empty marks an errored invocation. |
+| `stop_reason` | string | Response stop/finish reason where the fetcher lifted it (currently the `claude` provider); `''` otherwise. |
+| `input_tokens` / `output_tokens` | int64 | |
+| `cache_read_tokens` / `cache_write_tokens` | int64 | |
+| `latency_ms` | int64 | `0` when the provider does not report it. |
+| `principal` | string | |
+| `message_id` | string | Response message id (`claude`); `''` otherwise. |
+| `prev_message_id` | string | Prior turn's response message id named by the request (`claude`). |
+| `thread_id` | string | Chain the invocation belongs to (`claude`: the chain root's request uuid — the main thread and each subagent sidechain are distinct chains); `''` for providers without linkage. |
+| `request_uuid` | string | Capture-assigned request id (`claude`: the request filename uuid). |
+| `num_messages` | int32 | Transcript length of the request (`claude`); `0` when unknown. |
+| `extras` | string | JSON object of provider-specific identity attributes (e.g. `device_id`); `''` when none. |
+
+## `turns.parquet` — deduplicated conversation turns
+
+One row per reconstructed turn: the **main thread and every sidechain**
+(subagent) of each reconstructed conversation, written in conversation display
+order. Each unique turn appears once regardless of how many times a
+resend-style provider re-transmitted it — this table plus the facts table is
+the scalable representation of a capture's content. Conversations that were
+not reconstructed contribute no rows.
+
+| Column | Type | Notes |
+|---|---|---|
+| `conversation_id` | string | Joins to the manifest and `facts.parquet`. |
+| `session_id` | string | |
+| `provider` | string | |
+| `thread_id` | string | `''` for the main thread; the sidechain's id (matching `facts.thread_id`) for subagent threads. |
+| `turn_index` | int32 | 0-based within its thread. |
+| `role` | string | `user`, `assistant`, `system`. |
+| `text` | string | The turn's text blocks flattened — the full-text-search target. |
+| `blocks` | string | JSON array of the turn's typed blocks, in exactly the [block taxonomy](#block-type-taxonomy) shape used by the JSON files. |
+| `has_metrics` | boolean | Distinguishes absent metrics from real zero values. |
+| `timestamp`, `request_id`, `model_id`, `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, `latency_ms`, `first_byte_ms`, `stop_reason` | — | The turn's metrics (same semantics as the JSON `metrics` object); zero values when `has_metrics` is false. |
 
 ## Sensitivity
 

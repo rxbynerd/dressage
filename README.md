@@ -164,13 +164,15 @@ Ingestion (S3 / BigQuery / Log Analytics calls) is the expensive part, so
 `--format both` is the way to get both artifacts without fetching twice.
 
 The **IR** (Intermediate Representation) is a stable, versioned, provider-neutral
-JSON export of the same conversations the report shows, intended for a separate
+export of the same conversations the report shows, intended for a separate
 analysis program (judging, classification, signal extraction) to consume without
 re-fetching or re-parsing provider-native logs. Its directory layout is:
 
 ```
 report.ir/
 ├── manifest.json                    # run metadata + index of all conversations
+├── facts.parquet                    # columnar per-invocation facts (DuckDB-ready)
+├── turns.parquet                    # columnar deduplicated turns, sidechains included
 └── conversations/
     ├── <id>.json                    # one self-contained conversation IR per file
     └── …
@@ -178,11 +180,14 @@ report.ir/
 
 `--ir-dir` overrides the destination; by default it is the `--output` path with
 its extension replaced by `.ir` (so `--output march.html` yields `march.ir/`).
-Each conversation file carries both the reconstructed conversation
-(system prompt, tools, turns of typed blocks, per-turn metrics) and the raw
-per-invocation request/response pairs with the provider JSON bodies embedded
-inline. The full schema — every field, the block-type table, the stable-id rule,
-and the versioning policy — is documented in [docs/ir-format.md](docs/ir-format.md).
+Each conversation file carries the reconstructed conversation (system prompt,
+tools, turns of typed blocks, per-turn metrics) and per-invocation metadata;
+the two Parquet tables serve analytical engines directly (see
+[docs/duckdb-cookbook.md](docs/duckdb-cookbook.md)). Raw request/response
+payloads are omitted by default — `--raw-bodies embed` restores verbatim
+embedding, and the manifest records the mode. The full schema — every field,
+the block-type table, the stable-id rule, and the versioning policy — is
+documented in [docs/ir-format.md](docs/ir-format.md).
 
 ```bash
 # Emit both the human report and the machine IR from one fetch.

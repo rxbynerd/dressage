@@ -88,7 +88,7 @@ func reconstructOpenAI(records []model.Record) *model.ConversationDetail {
 	var all []parsedOpenAIInvocation
 	bestIdx := -1
 	for i := range sorted {
-		req := parseOpenAIRequest(sorted[i].Input.JSON)
+		req := parseOpenAIRequest(bodyJSON(sorted[i].Input))
 		if req == nil {
 			continue
 		}
@@ -128,9 +128,10 @@ func reconstructOpenAI(records []model.Record) *model.ConversationDetail {
 
 	// Append the final assistant response from the output body, unless it has no
 	// blocks (e.g. an empty/refused completion).
-	finalTurn := reassembleOpenAIOutput(best.rec.Output.JSON)
+	bestOutput := bodyJSON(best.rec.Output)
+	finalTurn := reassembleOpenAIOutput(bestOutput)
 	if finalTurn != nil && len(finalTurn.Blocks) > 0 {
-		finalTurn.Metrics = openaiMetrics(best.rec, best.rec.Output.JSON)
+		finalTurn.Metrics = openaiMetrics(best.rec, bestOutput)
 		detail.Turns = append(detail.Turns, *finalTurn)
 	}
 
@@ -156,7 +157,7 @@ func attachOpenAIMetrics(detail *model.ConversationDetail, invocations []parsedO
 		if turn.Metrics != nil {
 			continue
 		}
-		turn.Metrics = openaiMetrics(p.rec, p.rec.Output.JSON)
+		turn.Metrics = openaiMetrics(p.rec, bodyJSON(p.rec.Output))
 	}
 }
 

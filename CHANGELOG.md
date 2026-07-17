@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- IR schema `dressage.ir/1.2` (additive): reconstructed **sidechains** (subagent
+  threads) are now carried inline in each conversation file
+  (`conversation.sidechains[]`), so a consumer renders or analyses subagents
+  without joining `turns.parquet`; the manifest's `totals` gained
+  `model_breakdown` / `op_breakdown` maps (per-model and per-operation invocation
+  counts across the run); and each `conversations[]` index entry gained
+  `display_id`. See [docs/ir-format.md](docs/ir-format.md).
 - Columnar IR tables for analytical engines (IR schema `dressage.ir/1.1`):
   every IR export now includes `facts.parquet` (one row per invocation —
   errored and sidechain invocations included — with conversation/session/

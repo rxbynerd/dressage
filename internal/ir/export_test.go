@@ -27,18 +27,19 @@ var fixedGeneratedAt = time.Date(2024, 1, 20, 12, 0, 0, 0, time.UTC)
 // fixedSource is the canned run metadata used for the golden manifest.
 var fixedSource = ir.SourceInfo{
 	Provider: "bedrock",
-	Command:  "dressage bedrock --bucket my-logs --format ir",
+	Command:  "dressage bedrock --bucket my-logs --out report.ir",
 	DateRange: ir.ManifestDateRng{
 		Start: "2024-01-15",
 		End:   "2024-01-15",
 	},
 }
 
-// TestGoldenIRExport feeds a canned *model.Report covering all four provider
-// situations (Bedrock/Anthropic, Azure/OpenAI, Vertex/Gemini, and a deferred
-// provider) through ir.Export into a temp dir and compares every emitted file
-// byte-for-byte against committed goldens. It locks the IR schema shape,
-// determinism, and stable-id derivation.
+// TestGoldenIRExport feeds a canned *model.Report covering all five provider
+// situations (Bedrock/Anthropic, Azure/OpenAI, Vertex/Gemini, a deferred
+// provider, and a Claude session with a reconstructed sidechain) through
+// ir.Export into a temp dir and compares every emitted file byte-for-byte
+// against committed goldens. It locks the IR schema shape, determinism,
+// stable-id derivation, and the sidechains-in-conversation representation.
 func TestGoldenIRExport(t *testing.T) {
 	rpt := goldenReport()
 
@@ -467,8 +468,10 @@ func goldenReport() *model.Report {
 
 // goldenRecords returns canned invocation records: a reconstructed Bedrock
 // (Anthropic) conversation with a long tool description + input schema, an Azure
-// (OpenAI) conversation, a Vertex (Gemini) conversation with a media part, and a
-// deferred Claude-on-Vertex conversation.
+// (OpenAI) conversation, a Vertex (Gemini) conversation with a media part, a
+// deferred Claude-on-Vertex conversation, and a Claude session whose two records
+// carry distinct correlation thread ids so reconstruction yields a main thread
+// plus one sidechain (exercising conversation.sidechains[]).
 func goldenRecords() []model.Record {
 	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	longDesc := repeat("x", 250)
@@ -509,6 +512,14 @@ func goldenRecords() []model.Record {
 	deferredIn := `{"anthropic_version":"vertex-2023-10-16","messages":[{"role":"user","content":"hello"}]}`
 	deferredOut := `{"content":[{"type":"text","text":"hi"}]}`
 
+	// Claude (Anthropic family), session-grouped. Two records sharing a session
+	// but carrying distinct correlation thread ids: ReconstructThreads splits
+	// them into the earliest-starting main thread and one sidechain (a subagent).
+	claudeMainIn := `{"messages":[{"role":"user","content":"Plan the refactor and delegate the research."}]}`
+	claudeMainOut := `{"id":"msg_claude_main","role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Delegating repo exploration to a subagent."}]}`
+	claudeSubIn := `{"messages":[{"role":"user","content":"Explore internal/ir and report back."}]}`
+	claudeSubOut := `{"id":"msg_claude_sub","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"internal/ir holds ir.go, map.go, and export.go."}]}`
+
 	return []model.Record{
 		{
 			Provider: "bedrock", Timestamp: base, RequestID: "req-bedrock-1",
@@ -539,6 +550,24 @@ func goldenRecords() []model.Record {
 			Identity: model.Identity{Principal: "sa@project.iam.gserviceaccount.com"},
 			Input:    model.Body{JSON: json.RawMessage(deferredIn), ContentType: "application/json", TokenCount: 5},
 			Output:   model.Body{JSON: json.RawMessage(deferredOut), ContentType: "application/json", TokenCount: 2},
+		},
+		{
+			Provider: "claude", Timestamp: base.Add(4 * time.Minute), RequestID: "req-claude-main-1",
+			ModelID: "claude-opus-4-6", Operation: "messages", Status: "200",
+			SessionID:   "claude-sess-1",
+			Correlation: model.Correlation{ThreadID: "chain-main", MessageID: "msg_claude_main", RequestUUID: "chain-main", NumMessages: 1},
+			Identity:    model.Identity{Principal: "acct-42"},
+			Input:       model.Body{JSON: json.RawMessage(claudeMainIn), ContentType: "application/json", TokenCount: 30, CacheRead: 8, CacheWrite: 3},
+			Output:      model.Body{JSON: json.RawMessage(claudeMainOut), ContentType: "application/json", TokenCount: 14},
+		},
+		{
+			Provider: "claude", Timestamp: base.Add(4*time.Minute + 10*time.Second), RequestID: "req-claude-sub-1",
+			ModelID: "claude-opus-4-6", Operation: "messages", Status: "200",
+			SessionID:   "claude-sess-1",
+			Correlation: model.Correlation{ThreadID: "chain-sub", MessageID: "msg_claude_sub", RequestUUID: "chain-sub", NumMessages: 1},
+			Identity:    model.Identity{Principal: "acct-42"},
+			Input:       model.Body{JSON: json.RawMessage(claudeSubIn), ContentType: "application/json", TokenCount: 12},
+			Output:      model.Body{JSON: json.RawMessage(claudeSubOut), ContentType: "application/json", TokenCount: 9},
 		},
 	}
 }

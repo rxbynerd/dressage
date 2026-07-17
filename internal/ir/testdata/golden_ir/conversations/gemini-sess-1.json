@@ -1,7 +1,7 @@
 {
-  "schema_version": "dressage.ir/1.1",
+  "schema_version": "dressage.ir/1.2",
   "id": "gemini-sess-1",
-  "display_id": "conv-20240115-2",
+  "display_id": "conv-20240115-3",
   "session_id": "gemini-sess-1",
   "provider": "vertex",
   "model_id": "gemini-2.0-flash",

@@ -1,7 +1,7 @@
 {
-  "schema_version": "dressage.ir/1.1",
+  "schema_version": "dressage.ir/1.2",
   "id": "c135963494d637fd",
-  "display_id": "conv-20240115-3",
+  "display_id": "conv-20240115-4",
   "provider": "vertex",
   "model_id": "claude-opus-4-6",
   "identity": {

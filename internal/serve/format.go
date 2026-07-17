@@ -8,8 +8,8 @@ import (
 )
 
 // The display formatters below are ported verbatim from the retired HTML report
-// (internal/report) so the served pages read identically. shortModel/
-// shortSession/truncate/durationMs/formatInt keep their original semantics.
+// so the served pages read identically. shortModel/shortSession/truncate/
+// durationMs/formatInt keep their original semantics.
 
 // formatInt formats an int64 with thousands separators.
 func formatInt(n int64) string {

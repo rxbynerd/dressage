@@ -1,9 +1,9 @@
 // Package ir defines the machine-readable Intermediate Representation (IR) of a
 // Dressage report: a stable, versioned, provider-neutral JSON schema that a
-// downstream analysis program consumes instead of re-fetching or re-parsing the
-// provider-native logs. The IR branches off the same *model.Report as the HTML
-// report (parallel to internal/report) and is written as a directory of one
-// JSON file per conversation plus a manifest index (see Export).
+// downstream analysis program (or dressage serve) consumes instead of
+// re-fetching or re-parsing the provider-native logs. The IR is built from a
+// *model.Report and written as a directory of one JSON file per conversation
+// plus a manifest index (see Export); read back via Reader (see OpenDir).
 //
 // Field names are snake_case throughout (idiomatic for the cross-language
 // consumers we expect). Raw provider bodies embed as inline JSON

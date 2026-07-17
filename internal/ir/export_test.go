@@ -462,7 +462,6 @@ func goldenReport() *model.Report {
 	records := goldenRecords()
 	rpt := summary.Summarize(records)
 	rpt.GeneratedAt = fixedGeneratedAt
-	rpt.Title = "Golden IR Report"
 	return rpt
 }
 

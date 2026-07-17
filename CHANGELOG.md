@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `dressage serve <ir-dir>`: a localhost-only, server-rendered web UI over an IR
+  directory — the replacement for the retired static HTML report. It reads the
+  manifest for the index and one conversation file per request, so a viewer's
+  peak memory stays bounded to a single conversation regardless of capture size
+  (the whole 371 MB / 328-conversation `claude` IR browses the same as a small
+  one). The index shows run totals with by-model/by-operation breakdowns and
+  per-day cards; a conversation page shows the reconstructed view, subagent
+  sidechains, and the raw invocations (a size-capped preview plus a full-body
+  link when `--raw-bodies embed`, or token/cache metadata otherwise). Pages are
+  `html/template` output with `<details>` drill-down and no JavaScript. Bind
+  with `--addr` (default `127.0.0.1:7878`).
 - IR schema `dressage.ir/1.2` (additive): reconstructed **sidechains** (subagent
   threads) are now carried inline in each conversation file
   (`conversation.sidechains[]`), so a consumer renders or analyses subagents
@@ -118,6 +129,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The flat `dressage --bucket ...` invocation is replaced by
   `dressage bedrock --bucket ...`. The `--bucket`, `--prefix`, `--region`,
   and `--profile` flags are local to the `bedrock` subcommand.
-- **BREAKING (CLI):** `--start`, `--end`, and `--output` are now persistent
-  root flags shared across providers; they may be given before or after the
-  subcommand. Running `dressage` with no subcommand prints help.
+- **BREAKING (CLI):** `--start`, `--end`, `--out`, and `--raw-bodies` are
+  ingestion flags shared across every provider subcommand (not the root), so the
+  `serve` subcommand does not inherit them. Running `dressage` with no
+  subcommand prints help.
+
+### Removed
+
+- **BREAKING (CLI):** The static self-contained HTML report and its
+  `--format` / `--output` / `--ir-dir` flags are gone. An ingestion run now
+  always writes the IR directory to `--out` (default `report.ir`); browse it
+  with `dressage serve <ir-dir>`. The single-file HTML report stopped scaling —
+  a resend-style capture produced a 2.4 GB file, because every turn re-embeds
+  the growing transcript — while the IR seam already streamed the same content
+  at a fraction of the size (that capture's IR is 371 MB).

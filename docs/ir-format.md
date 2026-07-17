@@ -6,8 +6,9 @@ instead of re-fetching or re-parsing provider-native logs. It is the contract
 for consumers; if this document and the emitted output ever disagree, that is a
 bug in Dressage.
 
-Produce it with `--format ir` (or `--format both` alongside the HTML report) —
-see the [README](../README.md#outputs).
+It is the sole output of an ingestion run, written to `--out` (default
+`report.ir`); browse it with `dressage serve <ir-dir>` — see the
+[README](../README.md#outputs).
 
 ## Layout
 
@@ -400,10 +401,9 @@ not reconstructed contribute no rows.
 
 ## Sensitivity
 
-The IR contains full prompts and tool input/output **verbatim** — the same
-content the HTML report exposes, but in a form that flows easily into other
-systems. v1 performs no redaction or PII scrubbing. Treat IR directories as
-sensitive and scope their distribution accordingly.
+The IR contains full prompts and tool input/output **verbatim**, in a form that
+flows easily into other systems. It performs no redaction or PII scrubbing.
+Treat IR directories as sensitive and scope their distribution accordingly.
 
 ## Versioning policy summary
 

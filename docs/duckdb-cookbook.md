@@ -110,7 +110,10 @@ FROM 'exports/*/facts.parquet';
 
 ## Wiring a review UI
 
-A session-review web interface is a downstream program (dressage stays
+For plain browsing — reading conversations, skimming per-day stats — use the
+built-in `dressage serve <ir-dir>`, which renders the IR directly (no DuckDB
+involved). The shapes below are for a richer *analysis* UI (search, aggregation,
+scoring), which remains a downstream program (dressage stays
 ingest → normalize → export). Two proven shapes:
 
 - **Local server:** a Go binary embedding DuckDB via the official

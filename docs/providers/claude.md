@@ -94,10 +94,11 @@ appear in the IR facts table).
 ## Reconstruction and sidechains
 
 The reconstructed conversation view is the **main thread**. Subagent sidechains
-are reconstructed separately, one transcript per chain, and exported in the
-IR's `turns.parquet` with their thread id (they are not rendered in the HTML
-report). On multi-agent workflows sidechains are often the majority of the
-content — on a real capture, ~57% of all deduplicated turns.
+are reconstructed separately, one transcript per chain, and exported in the IR
+both inline in each conversation file (`conversation.sidechains[]`) and in
+`turns.parquet` with their thread id; `dressage serve` renders them on the
+conversation page. On multi-agent workflows sidechains are often the majority of
+the content — on a real capture, ~57% of all deduplicated turns.
 
 ## Scale and memory
 
@@ -115,16 +116,14 @@ directory) exports the IR in ~5 s with ~200 MB peak memory; the **entire
 producing a 370 MB IR. Before the lazy-body pipeline a single smaller day
 required ~15.7 GB.
 
-- `--start`/`--end` still bound run time (fewer files to read) and are the
-  natural working unit for the HTML report, which retains every rendered
-  conversation. `--format ir` runs are bounded regardless of window.
-- The self-contained HTML report embeds each invocation's raw body in a "Raw
-  Invocations" drill-down. These are capped in size (with a truncation marker) so
-  the report stays shareable; the full conversation is always available in the
-  reconstructed conversation view above it.
+- `--start`/`--end` bound run time (fewer files to read), but ingestion is
+  memory-bounded regardless of window: conversations stream to the IR one at a
+  time.
 - The IR omits raw bodies by default (`--raw-bodies embed` restores them; see
   [docs/ir-format.md](../ir-format.md)) — with embedding on, a resend-style
-  capture's IR grows quadratically with conversation length.
+  capture's IR grows quadratically with conversation length. `dressage serve`
+  shows each embedded body as a size-capped preview with a link to the full
+  JSON, so a large embedded IR still browses cheaply.
 
 ## Usage
 
@@ -132,15 +131,15 @@ required ~15.7 GB.
 # Analyze a single day from the default capture directory
 dressage claude --start 2026-07-04 --end 2026-07-04
 
-# Point at a custom capture directory and write to a named file
+# Point at a custom capture directory and write to a named IR directory
 dressage claude --dir /path/to/raw-api-bodies \
-  --start 2026-07-01 --end 2026-07-04 --output week.html
+  --start 2026-07-01 --end 2026-07-04 --out week.ir
 ```
 
 ### Flags
 
-`--start`, `--end`, and `--output` are shared root flags (see the main README).
-The `claude` subcommand adds:
+`--start`, `--end`, `--out`, and `--raw-bodies` are shared ingestion flags (see
+the main README). The `claude` subcommand adds:
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -154,5 +153,6 @@ The `claude` subcommand adds:
 - **The last assistant reply of a session is missing** — its terminal response
   fell outside the write-time match window (e.g. the session was still open when
   captured, or the response file was pruned). Earlier turns are unaffected.
-- **The report is large or slow to open** — narrow the date window; a single day
-  is the recommended working unit for this provider.
+- **Ingesting a very large window is slow** — narrow the date window; a single
+  day is a good working unit for this provider. Browsing the resulting IR with
+  `dressage serve` is memory-bounded regardless of capture size.

@@ -140,9 +140,8 @@ retention period appropriate to your needs. See
 
 ## Usage
 
-`--start`, `--end`, and `--output` are persistent (root) flags and may appear
-before or after the `azure` subcommand. The Azure-specific flags are local to
-`azure`.
+`--start`, `--end`, `--out`, and `--raw-bodies` are ingestion flags shared by
+every provider subcommand. The Azure-specific flags are local to `azure`.
 
 ```bash
 # Analyze all RequestResponse logs in a workspace
@@ -152,20 +151,21 @@ dressage azure --workspace 11111111-2222-3333-4444-555555555555
 dressage azure --workspace 11111111-2222-3333-4444-555555555555 \
   --start 2025-03-01 --end 2025-03-15
 
-# Narrow to one resource and pin the tenant, writing to a named file
+# Narrow to one resource and pin the tenant, writing to a named IR directory
 dressage azure --workspace 11111111-2222-3333-4444-555555555555 \
-  --resource my-aoai --tenant <tenant-guid> --output march-report.html
+  --resource my-aoai --tenant <tenant-guid> --out march.ir
 ```
 
 ### Flags
 
-Persistent (root) flags, shared with every provider:
+Ingestion flags, shared by every provider subcommand:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
-| `--output` | `report.html` | Output HTML file path |
+| `--out` | `report.ir` | IR output directory |
+| `--raw-bodies` | `omit` | Embed verbatim request/response JSON in the IR: `omit` or `embed` |
 
 `azure`-specific flags:
 
@@ -215,9 +215,9 @@ trims to the exact `--start`/`--end` window using each record's own timestamp.
 # Read all RequestResponse blobs from a storage account
 dressage azure-storage --account mydiaglogs
 
-# Filter to a date range, writing to a named file
+# Filter to a date range, writing to a named IR directory
 dressage azure-storage --account mydiaglogs \
-  --start 2025-03-01 --end 2025-03-15 --output march-report.html
+  --start 2025-03-01 --end 2025-03-15 --out march.ir
 ```
 
 `azure-storage`-specific flags:

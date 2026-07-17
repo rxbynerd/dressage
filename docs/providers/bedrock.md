@@ -67,9 +67,8 @@ bucket, not just the top-level log objects.
 
 ## Usage
 
-`--start`, `--end`, and `--output` are persistent (root) flags and may appear
-before or after the `bedrock` subcommand. The S3-specific flags are local to
-`bedrock`.
+`--start`, `--end`, `--out`, and `--raw-bodies` are ingestion flags shared by
+every provider subcommand. The S3-specific flags are local to `bedrock`.
 
 ```bash
 # Analyze all logs in a bucket
@@ -78,19 +77,20 @@ dressage bedrock --bucket my-bedrock-logs
 # Filter to a date range using a named AWS profile
 dressage bedrock --bucket my-bedrock-logs --profile dev --start 2025-03-01 --end 2025-03-15
 
-# Specify a prefix, region, and output path
-dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --region us-east-1 --output march-report.html
+# Specify a prefix, region, and IR output directory
+dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --region us-east-1 --out march.ir
 ```
 
 ### Flags
 
-Persistent (root) flags, shared with every provider:
+Ingestion flags, shared by every provider subcommand:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
-| `--output` | `report.html` | Output HTML file path |
+| `--out` | `report.ir` | IR output directory |
+| `--raw-bodies` | `omit` | Embed verbatim request/response JSON in the IR: `omit` or `embed` |
 
 `bedrock`-specific flags:
 

@@ -45,6 +45,7 @@ internal/
   s3fetch/                - AWS Bedrock: S3 .json.gz NDJSON (bedrock.go = schema, fetch.go = listing/parse)
   azurefetch/             - Azure OpenAI: Log Analytics workspace AND Storage-account blobs
   vertexfetch/            - Google Vertex AI / Gemini: BigQuery request-response table
+  rawfetch/               - local raw Claude API bodies: dir walk, mtime windowing, previous_message_id pairing
   conversation/           - reconstruct ConversationDetail from records; dispatch by envelope family
     dispatch.go           - family(provider, modelID) → Anthropic | OpenAI | Gemini | VertexDeferred; ExtractSessionID
     parse.go              - Anthropic Messages API envelope
@@ -103,3 +104,9 @@ docs/
   days/weeks volumes; would need rethinking for months of high-volume data.
 - **IR is versioned and provider-neutral** — a downstream analysis program can
   consume conversations without re-parsing provider-native logs.
+- **Rendered body cap** — `summary.renderBody` truncates each raw-invocation
+  body embedded in the HTML report to `maxRenderedBodyBytes` (32 KiB) with a
+  marker. This is a defensive cap for providers (like `claude`) that resend the
+  full running transcript on every turn, which would otherwise produce
+  multi-GB reports; reconstruction and the IR are unaffected since they read
+  the raw JSON, not the rendered string.

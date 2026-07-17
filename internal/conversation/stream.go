@@ -206,7 +206,11 @@ func extractStreamMetrics(body json.RawMessage) *streamMetrics {
 
 	var chunks []streamChunk
 	if err := json.Unmarshal(body, &chunks); err != nil {
-		return nil
+		// Not a streaming array: try a non-streaming Messages API response object
+		// (the shape captured by the raw-api-bodies / claude provider). Only
+		// stop_reason and cache tokens are recoverable; latency/first-byte are
+		// not present in a non-streaming body.
+		return nonStreamingMetrics(body)
 	}
 
 	sm := &streamMetrics{}
@@ -250,6 +254,32 @@ func extractStreamMetrics(body json.RawMessage) *streamMetrics {
 	}
 
 	if sm.StopReason == "" && sm.LatencyMs == 0 {
+		return nil
+	}
+	return sm
+}
+
+// nonStreamingMetrics extracts stop_reason and cache-token counts from a
+// non-streaming Messages API response object (as opposed to the streaming array
+// of SSE chunks handled above). It returns nil when the body is not such an
+// object or carries none of the recoverable fields.
+func nonStreamingMetrics(body json.RawMessage) *streamMetrics {
+	var resp struct {
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
+			CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+			CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil
+	}
+	sm := &streamMetrics{
+		StopReason:       resp.StopReason,
+		CacheReadTokens:  resp.Usage.CacheReadInputTokens,
+		CacheWriteTokens: resp.Usage.CacheCreationInputTokens,
+	}
+	if sm.StopReason == "" && sm.CacheReadTokens == 0 && sm.CacheWriteTokens == 0 {
 		return nil
 	}
 	return sm

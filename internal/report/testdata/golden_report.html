@@ -222,6 +222,10 @@
     background: var(--success-light);
     border-left: 3px solid var(--success);
   }
+  .chat-msg.system {
+    background: var(--amber-light);
+    border-left: 3px solid var(--amber);
+  }
   .chat-role {
     font-weight: 700;
     font-size: 0.75rem;
@@ -231,6 +235,7 @@
   }
   .chat-msg.user .chat-role { color: var(--accent); }
   .chat-msg.assistant .chat-role { color: var(--success); }
+  .chat-msg.system .chat-role { color: var(--amber); }
 
   .content-block { margin-bottom: 0.4rem; }
   .content-block:last-child { margin-bottom: 0; }
@@ -1037,7 +1042,7 @@ System part two.</div>
               
               
               
-              
+              <div><span class="metric-label">stop</span> <span class="metric-value">end_turn</span></div>
               <div><span class="metric-label">model</span> <span class="metric-value">claude-opus-4-6</span></div>
             </div>
             

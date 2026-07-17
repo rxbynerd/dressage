@@ -17,6 +17,7 @@ import (
 	"github.com/rxbynerd/dressage/internal/azurefetch"
 	"github.com/rxbynerd/dressage/internal/fetch"
 	"github.com/rxbynerd/dressage/internal/ir"
+	"github.com/rxbynerd/dressage/internal/rawfetch"
 	"github.com/rxbynerd/dressage/internal/report"
 	"github.com/rxbynerd/dressage/internal/s3fetch"
 	"github.com/rxbynerd/dressage/internal/summary"
@@ -48,6 +49,7 @@ func main() {
 	root.AddCommand(newAzureCommand(&common))
 	root.AddCommand(newAzureStorageCommand(&common))
 	root.AddCommand(newVertexCommand(&common))
+	root.AddCommand(newClaudeCommand(&common))
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -269,6 +271,45 @@ func newVertexCommand(common *commonFlags) *cobra.Command {
 	_ = cmd.MarkFlagRequired("table")
 
 	return cmd
+}
+
+// newClaudeCommand builds the "claude" subcommand, which reconstructs
+// conversations from raw Anthropic Messages API request/response bodies captured
+// on the local filesystem (by default under ~/.claude/raw-api-bodies, as written
+// by Claude Code when raw-body capture is enabled). Unlike the hosted-provider
+// subcommands it needs no cloud credentials; it only reads local files.
+func newClaudeCommand(common *commonFlags) *cobra.Command {
+	var dir string
+
+	cmd := &cobra.Command{
+		Use:          "claude",
+		Short:        "Analyze raw Claude API request/response bodies from a local directory",
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dir == "" {
+				dir = defaultRawBodiesDir()
+			}
+			log.Printf("Reading raw Claude API bodies from %s...", dir)
+			fetcher := rawfetch.New(dir)
+
+			return runReport(cmd.Context(), fetcher, "Claude API Invocation Log Report", "claude", common)
+		},
+	}
+
+	cmd.Flags().StringVar(&dir, "dir", "", "Directory of captured request/response bodies (default: ~/.claude/raw-api-bodies)")
+
+	return cmd
+}
+
+// defaultRawBodiesDir returns the default capture directory,
+// ~/.claude/raw-api-bodies, falling back to a relative path if the home
+// directory cannot be resolved.
+func defaultRawBodiesDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".claude", "raw-api-bodies")
+	}
+	return filepath.Join(home, ".claude", "raw-api-bodies")
 }
 
 // runReport is the shared pipeline tail: it parses the common date filters,

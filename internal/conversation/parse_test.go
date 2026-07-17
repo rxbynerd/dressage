@@ -46,6 +46,16 @@ func TestExtractSessionID(t *testing.T) {
 			want:  "",
 		},
 		{
+			name:  "json user_id with session_id",
+			input: `{"metadata":{"user_id":"{\"device_id\":\"d\",\"account_uuid\":\"a\",\"session_id\":\"8d924171-e6ac-47f8-a573-5ada0f8286ab\"}"}}`,
+			want:  "8d924171-e6ac-47f8-a573-5ada0f8286ab",
+		},
+		{
+			name:  "json user_id without session_id",
+			input: `{"metadata":{"user_id":"{\"account_uuid\":\"a\"}"}}`,
+			want:  "",
+		},
+		{
 			name:  "empty body",
 			input: ``,
 			want:  "",
@@ -270,6 +280,32 @@ func TestExtractStreamMetrics(t *testing.T) {
 	}
 	if sm.CacheReadTokens != 400 {
 		t.Errorf("CacheReadTokens = %d, want 400", sm.CacheReadTokens)
+	}
+}
+
+func TestExtractStreamMetricsNonStreaming(t *testing.T) {
+	// A non-streaming Messages API response object (the shape captured by the
+	// claude raw-body provider) yields stop_reason and cache tokens; latency and
+	// first-byte are not present in such a body.
+	body := `{"id":"msg_1","role":"assistant","stop_reason":"tool_use",
+		"content":[{"type":"text","text":"hi"}],
+		"usage":{"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":900,"cache_creation_input_tokens":30}}`
+
+	sm := extractStreamMetrics(json.RawMessage(body))
+	if sm == nil {
+		t.Fatal("expected non-nil metrics for non-streaming response")
+	}
+	if sm.StopReason != "tool_use" {
+		t.Errorf("StopReason = %q, want tool_use", sm.StopReason)
+	}
+	if sm.CacheReadTokens != 900 {
+		t.Errorf("CacheReadTokens = %d, want 900", sm.CacheReadTokens)
+	}
+	if sm.CacheWriteTokens != 30 {
+		t.Errorf("CacheWriteTokens = %d, want 30", sm.CacheWriteTokens)
+	}
+	if sm.LatencyMs != 0 || sm.FirstByteMs != 0 {
+		t.Errorf("expected no latency for non-streaming body, got latency=%d firstByte=%d", sm.LatencyMs, sm.FirstByteMs)
 	}
 }
 

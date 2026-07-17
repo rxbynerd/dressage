@@ -8,6 +8,7 @@ import (
 	"log"
 	"sort"
 	"time"
+	"unicode/utf8"
 
 	"github.com/rxbynerd/dressage/internal/conversation"
 	"github.com/rxbynerd/dressage/internal/model"
@@ -274,8 +275,8 @@ func buildConversationSummary(id string, records []model.Record) model.Conversat
 			Operation:    rec.Operation,
 			Status:       rec.Status,
 			ErrorCode:    rec.ErrorCode,
-			InputBody:    prettyJSON(rec.Input.JSON),
-			OutputBody:   prettyJSON(rec.Output.JSON),
+			InputBody:    renderBody(rec.Input.JSON),
+			OutputBody:   renderBody(rec.Output.JSON),
 			InputTokens:  rec.Input.TokenCount,
 			OutputTokens: rec.Output.TokenCount,
 			Identity:     rec.Identity.Principal,
@@ -328,6 +329,33 @@ func emptyStats() model.Stats {
 		ModelBreakdown: make(map[string]int),
 		OpBreakdown:    make(map[string]int),
 	}
+}
+
+// maxRenderedBodyBytes bounds the pretty-printed size of a single raw
+// request/response body embedded in the "Raw Invocations" drill-down. It is a
+// defensive cap: some providers (notably the local "claude" raw-body capture,
+// where Claude Code resends the entire running transcript on every turn) produce
+// invocation bodies that grow to megabytes and repeat across every turn, which
+// would otherwise blow the self-contained HTML report up to gigabytes. Typical
+// single-turn provider bodies fall well under this limit and are never touched.
+// Reconstruction is unaffected: it reads the raw JSON directly, not this
+// rendered string.
+const maxRenderedBodyBytes = 32 * 1024
+
+// renderBody pretty-prints a raw body for the report, truncating the result to
+// maxRenderedBodyBytes with a marker noting the original size. Truncation is on
+// a rune boundary so the embedded HTML stays valid UTF-8.
+func renderBody(raw json.RawMessage) string {
+	s := prettyJSON(raw)
+	if len(s) <= maxRenderedBodyBytes {
+		return s
+	}
+	cut := maxRenderedBodyBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return fmt.Sprintf("%s\n\n… truncated (%d of %d bytes shown; full body available in the reconstructed conversation view)",
+		s[:cut], cut, len(s))
 }
 
 // prettyJSON attempts to pretty-print a JSON raw message.

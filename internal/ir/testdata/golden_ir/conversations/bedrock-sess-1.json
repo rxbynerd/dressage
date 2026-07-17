@@ -67,7 +67,8 @@
           "cache_read_tokens": 10,
           "cache_write_tokens": 4,
           "latency_ms": 0,
-          "first_byte_ms": 0
+          "first_byte_ms": 0,
+          "stop_reason": "end_turn"
         }
       }
     ]

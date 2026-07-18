@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// Report is the top-level structure passed to the HTML template.
+// Report is the top-level grouped view of a run: aggregate stats plus the
+// per-day, per-conversation breakdown the IR exporter consumes.
 type Report struct {
-	Title       string // report heading, e.g. "Bedrock Invocation Log Report"
 	GeneratedAt time.Time
 	DateRange   DateRange
 	TotalStats  Stats
@@ -55,26 +55,18 @@ type ConversationSummary struct {
 	Sidechains   []Thread            // reconstructed sidechain threads (subagents); empty when none or when Detail is nil
 }
 
-// Invocation is a single request/response pair. It carries both a display copy
-// (pretty-printed JSON bodies, principal-only identity) used by the HTML report
-// and the raw record fields (inline JSON bodies, cache counts, full identity,
-// provider extras) needed for a faithful machine-readable export.
+// Invocation is a single request/response pair, preserved verbatim so the IR
+// exporter can embed inline JSON bodies and full per-invocation metadata
+// without re-fetching the source logs. Token/cache accounting and the
+// normalized identity live on the raw fields (Input/Output, FullIdentity).
 type Invocation struct {
-	Timestamp    time.Time
-	RequestID    string
-	ModelID      string
-	Operation    string
-	Status       string
-	ErrorCode    string
-	InputBody    string // pretty-printed JSON (for HTML display)
-	OutputBody   string // pretty-printed JSON (for HTML display)
-	InputTokens  int64
-	OutputTokens int64
-	Identity     string // principal only (for HTML display)
+	Timestamp time.Time
+	RequestID string
+	ModelID   string
+	Operation string
+	Status    string
+	ErrorCode string
 
-	// Raw record fields, preserved verbatim for faithful export. These are not
-	// used by the HTML report but let the IR exporter embed inline JSON bodies
-	// and full per-invocation metadata without re-fetching the source logs.
 	LatencyMs      int64
 	StopReason     string      // response stop/finish reason, when the fetcher lifted it
 	Correlation    Correlation // provider-assigned message/thread linkage, when available

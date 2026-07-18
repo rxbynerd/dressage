@@ -3,6 +3,7 @@ package ir
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -225,15 +226,27 @@ func ConversationCount(report *model.Report) int {
 
 // mapTotals aggregates the run-wide manifest totals from the report stats and
 // the number of conversations actually written (which the skeleton report of a
-// streaming run does not know).
+// streaming run does not know). The model/op breakdown maps are copied (never
+// aliased) and always non-nil so an empty run serializes {} rather than null.
 func mapTotals(stats model.Stats, conversations int) ManifestTotals {
 	return ManifestTotals{
-		Conversations: conversations,
-		Invocations:   stats.InvocationCount,
-		InputTokens:   stats.InputTokens,
-		OutputTokens:  stats.OutputTokens,
-		Errors:        stats.ErrorCount,
+		Conversations:  conversations,
+		Invocations:    stats.InvocationCount,
+		InputTokens:    stats.InputTokens,
+		OutputTokens:   stats.OutputTokens,
+		Errors:         stats.ErrorCount,
+		ModelBreakdown: copyCountMap(stats.ModelBreakdown),
+		OpBreakdown:    copyCountMap(stats.OpBreakdown),
 	}
+}
+
+// copyCountMap returns a copy of m, or an empty (non-nil) map when m is nil, so
+// the manifest's breakdown fields are always concrete JSON objects. (maps.Clone
+// would preserve a nil input, which is why this pre-allocates and copies.)
+func copyCountMap(m map[string]int) map[string]int {
+	out := make(map[string]int, len(m))
+	maps.Copy(out, m)
+	return out
 }
 
 // writeParquet writes rows as a zstd-compressed Parquet file at path. Note

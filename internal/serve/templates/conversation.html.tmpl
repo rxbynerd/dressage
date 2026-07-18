@@ -1,0 +1,77 @@
+{{define "content"}}
+<div class="topnav"><a href="/">&larr; All conversations</a></div>
+
+{{with .Conv}}
+<div class="conv-page-header">
+  <h1>{{if .DisplayID}}{{.DisplayID}}{{else}}{{.ID}}{{end}}</h1>
+  <div class="conv-page-badges">
+    <span class="conv-model">{{shortModel .ModelID}}</span>
+    {{if .SessionID}}<span class="conv-session">session:{{shortSession .SessionID}}</span>{{end}}
+    <span class="conv-deferred">{{.Provider}}</span>
+    {{if not .Conversation}}<span class="conv-deferred">not reconstructed</span>{{end}}
+  </div>
+  <div class="conv-stats">
+    {{if .Conversation}}<div>Turns: <span>{{len .Conversation.Turns}}</span></div>{{end}}
+    <div>Invocations: <span>{{.Stats.InvocationCount}}</span></div>
+    <div>In: <span>{{formatInt .Stats.InputTokens}}</span></div>
+    <div>Out: <span>{{formatInt .Stats.OutputTokens}}</span></div>
+    {{if gt .Stats.CacheReadTokens 0}}<div>Cache-read: <span>{{formatInt .Stats.CacheReadTokens}}</span></div>{{end}}
+    {{if gt .Stats.ErrorCount 0}}<div>Errors: <span style="color:var(--error)">{{.Stats.ErrorCount}}</span></div>{{end}}
+    <div>{{.StartTime.Format "2006-01-02 15:04:05"}} &ndash; {{.EndTime.Format "15:04:05"}}</div>
+  </div>
+</div>
+
+{{if .Conversation}}
+  {{template "convview" .Conversation}}
+{{else}}
+  <div class="note">This conversation was not reconstructed (a deferred provider, or grouped by the time-gap heuristic). The raw invocations below are still available.</div>
+{{end}}
+
+{{range .Sidechains}}
+<div class="thread-heading">Subagent thread &middot; {{.ID}}</div>
+{{template "convview" .Conversation}}
+{{end}}
+{{end}}
+
+<details>
+  <summary class="section-divider"><span class="arrow">&#9654;</span> Raw Invocations ({{len .Conv.Invocations}})</summary>
+  <div style="margin-top: 0.5rem;">
+  {{range $i, $inv := .Conv.Invocations}}
+  <details class="invocation">
+    <summary class="inv-header">
+      <div class="inv-meta">
+        <span class="arrow">&#9654;</span>
+        <span class="inv-time">{{$inv.Timestamp.Format "15:04:05"}}</span>
+        {{if $inv.Operation}}<span class="inv-op">{{$inv.Operation}}</span>{{end}}
+        <span class="inv-status {{if $inv.ErrorCode}}error{{else}}ok{{end}}">{{$inv.Status}}{{if $inv.ErrorCode}} ({{$inv.ErrorCode}}){{end}}</span>
+      </div>
+      <div class="inv-tokens">in:{{formatInt $inv.Input.TokenCount}} out:{{formatInt $inv.Output.TokenCount}}</div>
+    </summary>
+    <div class="inv-body">
+      {{if $.BodiesEmbedded}}
+        <div class="inv-section">
+          <div class="inv-section-label">Request{{if $inv.RequestID}} ({{$inv.RequestID}}){{end}}{{if hasJSON $inv.Input.JSON}} <a href="/conversations/{{$.Name}}/raw/{{$i}}/input">raw</a>{{end}}</div>
+          {{if hasJSON $inv.Input.JSON}}<pre class="json">{{prettyBody $inv.Input.JSON}}</pre>{{else}}<div class="note">No request body recorded.</div>{{end}}
+        </div>
+        <div class="inv-section">
+          <div class="inv-section-label">Response{{if hasJSON $inv.Output.JSON}} <a href="/conversations/{{$.Name}}/raw/{{$i}}/output">raw</a>{{end}}</div>
+          {{if hasJSON $inv.Output.JSON}}<pre class="json">{{prettyBody $inv.Output.JSON}}</pre>{{else}}<div class="note">No response body recorded.</div>{{end}}
+        </div>
+      {{else}}
+        <div class="inv-section">
+          <div class="inv-section-label">Request{{if $inv.RequestID}} ({{$inv.RequestID}}){{end}}</div>
+          <div class="conv-stats">
+            <div>In: <span>{{formatInt $inv.Input.TokenCount}}</span></div>
+            {{if gt $inv.Input.CacheRead 0}}<div>Cache-read: <span>{{formatInt $inv.Input.CacheRead}}</span></div>{{end}}
+            {{if gt $inv.Input.CacheWrite 0}}<div>Cache-write: <span>{{formatInt $inv.Input.CacheWrite}}</span></div>{{end}}
+            <div>Out: <span>{{formatInt $inv.Output.TokenCount}}</span></div>
+            {{if gt $inv.LatencyMs 0}}<div>Latency: <span>{{durationMs $inv.LatencyMs}}</span></div>{{end}}
+          </div>
+        </div>
+      {{end}}
+    </div>
+  </details>
+  {{end}}
+  </div>
+</details>
+{{end}}

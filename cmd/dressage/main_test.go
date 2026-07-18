@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/rxbynerd/dressage/internal/ir"
 	"github.com/rxbynerd/dressage/internal/model"
+	"github.com/rxbynerd/dressage/internal/serve"
 )
 
 // fakeFetcher returns a canned set of records, ignoring the date window.
@@ -43,52 +47,21 @@ func smokeRecords() []model.Record {
 	}}
 }
 
-func TestResolveIRDir(t *testing.T) {
-	cases := []struct {
-		name   string
-		output string
-		irDir  string
-		want   string
-	}{
-		{"derived from html output", "report.html", "", "report.ir"},
-		{"derived with path", filepath.Join("out", "march.html"), "", filepath.Join("out", "march.ir")},
-		{"derived without extension", "report", "", "report.ir"},
-		{"explicit ir-dir wins", "report.html", "custom.ir", "custom.ir"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := resolveIRDir(&commonFlags{output: c.output, irDir: c.irDir})
-			if got != c.want {
-				t.Errorf("resolveIRDir(output=%q, irDir=%q) = %q, want %q", c.output, c.irDir, got, c.want)
-			}
-		})
-	}
-}
-
-func TestRunReportFormatBothWritesHTMLAndIR(t *testing.T) {
+// TestRunReportWritesIR asserts an ingestion run writes the IR directory — a
+// manifest plus one conversation file — as its sole output, with the provider
+// recorded in the manifest source.
+func TestRunReportWritesIR(t *testing.T) {
 	tmp := t.TempDir()
-	out := filepath.Join(tmp, "report.html")
-	common := &commonFlags{output: out, format: "both"}
+	irDir := filepath.Join(tmp, "out.ir")
+	common := &commonFlags{out: irDir}
 
-	err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common)
-	if err != nil {
+	if err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "bedrock", common); err != nil {
 		t.Fatalf("runReport: %v", err)
 	}
 
-	// HTML report exists.
-	if _, err := os.Stat(out); err != nil {
-		t.Errorf("HTML report not written: %v", err)
-	}
-
-	// IR directory + manifest + one conversation file exist.
-	irDir := filepath.Join(tmp, "report.ir")
-	manifestPath := filepath.Join(irDir, "manifest.json")
-	if _, err := os.Stat(manifestPath); err != nil {
-		t.Fatalf("manifest not written: %v", err)
-	}
-	b, err := os.ReadFile(manifestPath)
+	b, err := os.ReadFile(filepath.Join(irDir, "manifest.json"))
 	if err != nil {
-		t.Fatalf("read manifest: %v", err)
+		t.Fatalf("manifest not written: %v", err)
 	}
 	var manifest struct {
 		Source struct {
@@ -111,48 +84,35 @@ func TestRunReportFormatBothWritesHTMLAndIR(t *testing.T) {
 	if _, err := os.Stat(convPath); err != nil {
 		t.Errorf("conversation file not written: %v", err)
 	}
+
+	// No HTML report is produced any more.
+	if _, err := os.Stat(filepath.Join(tmp, "report.html")); !os.IsNotExist(err) {
+		t.Errorf("unexpected HTML output, stat err = %v", err)
+	}
 }
 
-func TestRunReportFormatIROnlySkipsHTML(t *testing.T) {
+// TestServeCommandServesExportedIR closes the loop: an IR produced by an
+// ingestion run opens cleanly and the serve handler renders its index.
+func TestServeCommandServesExportedIR(t *testing.T) {
 	tmp := t.TempDir()
-	out := filepath.Join(tmp, "report.html")
-	common := &commonFlags{output: out, format: "ir"}
-
-	if err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common); err != nil {
+	irDir := filepath.Join(tmp, "out.ir")
+	if err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "bedrock", &commonFlags{out: irDir}); err != nil {
 		t.Fatalf("runReport: %v", err)
 	}
 
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Errorf("HTML report should not exist for --format ir, stat err = %v", err)
+	reader, err := ir.OpenDir(irDir)
+	if err != nil {
+		t.Fatalf("open IR: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmp, "report.ir", "manifest.json")); err != nil {
-		t.Errorf("IR manifest not written for --format ir: %v", err)
-	}
-}
+	h := serve.New(reader).Handler()
 
-func TestRunReportRejectsInvalidFormat(t *testing.T) {
-	common := &commonFlags{output: "report.html", format: "yaml"}
-	err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common)
-	if err == nil {
-		t.Fatal("expected an error for invalid --format, got nil")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
 	}
-}
-
-func TestRunReportFormatHTMLOnly(t *testing.T) {
-	tmp := t.TempDir()
-	out := filepath.Join(tmp, "report.html")
-	common := &commonFlags{output: out, format: "html"}
-
-	if err := runReport(context.Background(), fakeFetcher{smokeRecords()}, "Smoke Report", "bedrock", common); err != nil {
-		t.Fatalf("runReport: %v", err)
-	}
-
-	if _, err := os.Stat(out); err != nil {
-		t.Errorf("HTML report not written for --format html: %v", err)
-	}
-	// The default format must NOT create the IR directory.
-	if _, err := os.Stat(filepath.Join(tmp, "report.ir")); !os.IsNotExist(err) {
-		t.Errorf("IR dir should not exist for --format html, stat err = %v", err)
+	if !strings.Contains(rec.Body.String(), "bedrock") {
+		t.Errorf("index page missing provider name")
 	}
 }
 

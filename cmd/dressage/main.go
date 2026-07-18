@@ -18,8 +18,8 @@ import (
 	"github.com/rxbynerd/dressage/internal/fetch"
 	"github.com/rxbynerd/dressage/internal/ir"
 	"github.com/rxbynerd/dressage/internal/rawfetch"
-	"github.com/rxbynerd/dressage/internal/report"
 	"github.com/rxbynerd/dressage/internal/s3fetch"
+	"github.com/rxbynerd/dressage/internal/serve"
 	"github.com/rxbynerd/dressage/internal/summary"
 	"github.com/rxbynerd/dressage/internal/vertexfetch"
 )
@@ -29,13 +29,11 @@ const dateFormat = "2006-01-02"
 // version is set at build time via -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
-// commonFlags holds the provider-neutral flags shared by every subcommand.
+// commonFlags holds the ingestion flags shared by every provider subcommand.
 type commonFlags struct {
 	start     string
 	end       string
-	output    string
-	format    string // output format: "html", "ir", or "both"
-	irDir     string // IR output directory (defaults to --output with its extension replaced by .ir)
+	out       string // IR output directory
 	rawBodies string // raw bodies in the IR: "omit" (default) or "embed"
 }
 
@@ -45,12 +43,13 @@ func main() {
 	ir.Version = version
 
 	var common commonFlags
-	root := newRootCommand(&common)
+	root := newRootCommand()
 	root.AddCommand(newBedrockCommand(&common))
 	root.AddCommand(newAzureCommand(&common))
 	root.AddCommand(newAzureStorageCommand(&common))
 	root.AddCommand(newVertexCommand(&common))
 	root.AddCommand(newClaudeCommand(&common))
+	root.AddCommand(newServeCommand())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -58,33 +57,35 @@ func main() {
 }
 
 // newRootCommand builds the provider-neutral root command. With no subcommand
-// it prints help. Shared flags (--start/--end/--output) are persistent so they
-// apply to every provider subcommand.
-func newRootCommand(common *commonFlags) *cobra.Command {
+// it prints help.
+func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "dressage",
 		Short:   "Analyze hosted LLM model invocation logs",
 		Version: version,
 		Long: `Dressage fetches hosted LLM model invocation logs from a provider,
-groups them into conversations, and generates a self-contained HTML report
-for analyzing coding harness behaviour over the wire.
+groups them into conversations, and exports a versioned, provider-neutral IR
+directory for analyzing coding harness behaviour over the wire.
 
-Choose a provider subcommand (e.g. "dressage bedrock") to ingest logs.`,
+Choose a provider subcommand (e.g. "dressage bedrock") to ingest logs into an
+IR directory, then "dressage serve <ir-dir>" to browse it locally.`,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
-
-	pf := root.PersistentFlags()
-	pf.StringVar(&common.start, "start", "", "Start date filter (YYYY-MM-DD)")
-	pf.StringVar(&common.end, "end", "", "End date filter (YYYY-MM-DD)")
-	pf.StringVar(&common.output, "output", "report.html", "Output HTML file path")
-	pf.StringVar(&common.format, "format", "html", "Output format: html, ir, or both")
-	pf.StringVar(&common.irDir, "ir-dir", "", "IR output directory (default: --output with its extension replaced by .ir)")
-	pf.StringVar(&common.rawBodies, "raw-bodies", "omit", "Raw request/response bodies in the IR: omit or embed (embedding is quadratic for providers that resend the transcript every turn)")
-
 	return root
+}
+
+// addIngestFlags registers the ingestion flags shared by every provider
+// subcommand. They live on the provider subcommands (not the root) so the
+// serve command — which ingests nothing — does not inherit them.
+func addIngestFlags(cmd *cobra.Command, common *commonFlags) {
+	flags := cmd.Flags()
+	flags.StringVar(&common.start, "start", "", "Start date filter (YYYY-MM-DD)")
+	flags.StringVar(&common.end, "end", "", "End date filter (YYYY-MM-DD)")
+	flags.StringVar(&common.out, "out", "report.ir", "IR output directory")
+	flags.StringVar(&common.rawBodies, "raw-bodies", "omit", "Raw request/response bodies in the IR: omit or embed (embedding is quadratic for providers that resend the transcript every turn)")
 }
 
 // newBedrockCommand builds the "bedrock" subcommand, which ingests AWS Bedrock
@@ -120,7 +121,7 @@ func newBedrockCommand(common *commonFlags) *cobra.Command {
 			log.Println("Fetching Bedrock invocation logs from S3...")
 			fetcher := s3fetch.New(s3Client, bucket, prefix)
 
-			return runReport(cmd.Context(), fetcher, "Bedrock Invocation Log Report", "bedrock", common)
+			return runReport(cmd.Context(), fetcher, "bedrock", common)
 		},
 	}
 
@@ -129,6 +130,7 @@ func newBedrockCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&prefix, "prefix", "", "S3 key prefix")
 	flags.StringVar(&region, "region", "", "AWS region (default: from environment/config)")
 	flags.StringVar(&profile, "profile", "", "AWS named profile")
+	addIngestFlags(cmd, common)
 
 	_ = cmd.MarkFlagRequired("bucket")
 
@@ -167,7 +169,7 @@ func newAzureCommand(common *commonFlags) *cobra.Command {
 				return fmt.Errorf("creating Azure fetcher: %w", err)
 			}
 
-			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", "azure", common)
+			return runReport(cmd.Context(), fetcher, "azure", common)
 		},
 	}
 
@@ -176,6 +178,7 @@ func newAzureCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&subscription, "subscription", "", "Subscription ID narrowing filter")
 	flags.StringVar(&resource, "resource", "", "Azure OpenAI resource ID (or substring) narrowing filter")
 	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
+	addIngestFlags(cmd, common)
 
 	_ = cmd.MarkFlagRequired("workspace")
 
@@ -215,7 +218,7 @@ func newAzureStorageCommand(common *commonFlags) *cobra.Command {
 				return fmt.Errorf("creating Azure storage fetcher: %w", err)
 			}
 
-			return runReport(cmd.Context(), fetcher, "Azure OpenAI Invocation Log Report", "azure", common)
+			return runReport(cmd.Context(), fetcher, "azure", common)
 		},
 	}
 
@@ -223,6 +226,7 @@ func newAzureStorageCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&account, "account", "", "Azure Storage account name holding the diagnostic logs (required)")
 	flags.StringVar(&container, "container", azurefetch.DefaultContainer, "Blob container holding the diagnostic logs")
 	flags.StringVar(&tenant, "tenant", "", "Microsoft Entra tenant ID for authentication")
+	addIngestFlags(cmd, common)
 
 	_ = cmd.MarkFlagRequired("account")
 
@@ -257,7 +261,7 @@ func newVertexCommand(common *commonFlags) *cobra.Command {
 			log.Println("Querying Vertex AI invocation logs from BigQuery...")
 			fetcher := vertexfetch.New(client, project, dataset, table, location)
 
-			return runReport(cmd.Context(), fetcher, "Vertex AI Invocation Log Report", "vertex", common)
+			return runReport(cmd.Context(), fetcher, "vertex", common)
 		},
 	}
 
@@ -267,6 +271,7 @@ func newVertexCommand(common *commonFlags) *cobra.Command {
 	flags.StringVar(&table, "table", "", "BigQuery table holding the request-response logs (required)")
 	flags.StringVar(&location, "location", "", "BigQuery dataset location (e.g. us-central1; inferred if empty)")
 	flags.StringVar(&credentials, "credentials", "", "Path to a service-account key JSON file (default: Application Default Credentials)")
+	addIngestFlags(cmd, common)
 
 	_ = cmd.MarkFlagRequired("project")
 	_ = cmd.MarkFlagRequired("dataset")
@@ -294,11 +299,12 @@ func newClaudeCommand(common *commonFlags) *cobra.Command {
 			log.Printf("Reading raw Claude API bodies from %s...", dir)
 			fetcher := rawfetch.New(dir)
 
-			return runReport(cmd.Context(), fetcher, "Claude API Invocation Log Report", "claude", common)
+			return runReport(cmd.Context(), fetcher, "claude", common)
 		},
 	}
 
 	cmd.Flags().StringVar(&dir, "dir", "", "Directory of captured request/response bodies (default: ~/.claude/raw-api-bodies)")
+	addIngestFlags(cmd, common)
 
 	return cmd
 }
@@ -314,19 +320,13 @@ func defaultRawBodiesDir() string {
 	return filepath.Join(home, ".claude", "raw-api-bodies")
 }
 
-// runReport is the shared pipeline tail: it parses the common date filters,
-// fetches normalized records via the provider Fetcher, summarizes them, writes
-// the requested output(s) — the HTML report, the machine-readable IR, or both —
-// and prints a summary block to stdout. provider identifies the active
-// subcommand, recorded in the IR manifest's source metadata.
-func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider string, common *commonFlags) error {
-	// Validate the output format before doing any fetching.
-	format := common.format
-	switch format {
-	case "html", "ir", "both":
-	default:
-		return fmt.Errorf("invalid --format %q: expected one of html, ir, both", format)
-	}
+// runReport is the shared ingestion pipeline tail: it parses the common date
+// filters, fetches normalized records via the provider Fetcher, groups them,
+// and streams the machine-readable IR to disk one conversation at a time (so
+// peak memory stays bounded to the largest single transcript), then prints a
+// summary block to stdout. provider identifies the active subcommand, recorded
+// in the IR manifest's source metadata.
+func runReport(ctx context.Context, fetcher fetch.Fetcher, provider string, common *commonFlags) error {
 	var embedRawBodies bool
 	switch common.rawBodies {
 	case "", "omit": // "" = flag default when commonFlags is constructed directly
@@ -334,6 +334,10 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 		embedRawBodies = true
 	default:
 		return fmt.Errorf("invalid --raw-bodies %q: expected omit or embed", common.rawBodies)
+	}
+	irDir := common.out
+	if irDir == "" {
+		irDir = "report.ir"
 	}
 
 	// Parse date filters.
@@ -369,67 +373,40 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 	log.Println("Building summary...")
 	plan := summary.NewPlan(records)
 	rpt := plan.Report()
-	rpt.Title = title
-
-	htmlRequested := format == "html" || format == "both"
-	irRequested := format == "ir" || format == "both"
 
 	// Open the streaming IR exporter before materialization so conversations
 	// flow straight to disk.
-	var irDir string
-	var exporter *ir.Exporter
-	if irRequested {
-		irDir = resolveIRDir(common)
-		src := ir.SourceInfo{
-			Provider: provider,
-			Command:  commandString(),
-			DateRange: ir.ManifestDateRng{
-				Start: common.start,
-				End:   common.end,
-			},
-		}
-		log.Printf("Exporting IR to %s...", irDir)
-		exporter, err = ir.NewExporter(irDir, src, rpt.GeneratedAt, ir.ExportOptions{RawBodies: embedRawBodies})
-		if err != nil {
-			return fmt.Errorf("exporting IR: %w", err)
-		}
+	src := ir.SourceInfo{
+		Provider: provider,
+		Command:  commandString(),
+		DateRange: ir.ManifestDateRng{
+			Start: common.start,
+			End:   common.end,
+		},
+	}
+	log.Printf("Exporting IR to %s...", irDir)
+	exporter, err := ir.NewExporter(irDir, src, rpt.GeneratedAt, ir.ExportOptions{RawBodies: embedRawBodies})
+	if err != nil {
+		return fmt.Errorf("exporting IR: %w", err)
 	}
 
-	// Materialize conversations in one pass shared by both outputs. The HTML
-	// report needs every conversation rendered and retained in the report;
-	// an IR-only run retains nothing, so memory stays bounded to one
-	// conversation at a time.
+	// Materialize conversations one at a time, streaming each to the exporter.
+	// Nothing is retained, so peak memory stays bounded to a single transcript.
 	convCount := 0
-	opts := summary.MaterializeOptions{RenderBodies: htmlRequested, Retain: htmlRequested}
-	for cs := range plan.Conversations(opts) {
+	for cs := range plan.Conversations(summary.MaterializeOptions{}) {
 		convCount++
-		if exporter != nil {
-			if err := exporter.WriteConversation(*cs); err != nil {
-				return fmt.Errorf("exporting IR: %w", err)
-			}
-		}
-	}
-	if exporter != nil {
-		if err := exporter.Finish(rpt); err != nil {
+		if err := exporter.WriteConversation(*cs); err != nil {
 			return fmt.Errorf("exporting IR: %w", err)
 		}
 	}
-
-	if htmlRequested {
-		log.Printf("Generating report to %s...", common.output)
-		if err := report.Generate(rpt, common.output); err != nil {
-			return fmt.Errorf("generating report: %w", err)
-		}
+	if err := exporter.Finish(rpt); err != nil {
+		return fmt.Errorf("exporting IR: %w", err)
 	}
 
 	// Print summary to stdout.
 	fmt.Println()
-	if htmlRequested {
-		fmt.Printf("Report written to %s\n", common.output)
-	}
-	if irDir != "" {
-		fmt.Printf("IR written to %s (%d conversation file(s))\n", irDir, convCount)
-	}
+	fmt.Printf("IR written to %s (%d conversation file(s))\n", irDir, convCount)
+	fmt.Printf("  View it with: dressage serve %s\n", irDir)
 	fmt.Printf("  Date range:   %s to %s\n", rpt.DateRange.Start.Format(dateFormat), rpt.DateRange.End.Format(dateFormat))
 	fmt.Printf("  Invocations:  %d\n", rpt.TotalStats.InvocationCount)
 	fmt.Printf("  Input tokens: %d\n", rpt.TotalStats.InputTokens)
@@ -441,16 +418,45 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, title, provider strin
 	return nil
 }
 
-// resolveIRDir returns the IR output directory: the explicit --ir-dir when set,
-// otherwise the --output path with its extension replaced by ".ir" (e.g.
-// report.html -> report.ir). An --output with no extension simply gains ".ir".
-func resolveIRDir(common *commonFlags) string {
-	if common.irDir != "" {
-		return common.irDir
+// newServeCommand builds the "serve" subcommand: it opens an existing IR
+// directory and serves a browsable, localhost-only web UI over it — the
+// replacement for the retired static HTML report. It ingests nothing.
+func newServeCommand() *cobra.Command {
+	var addr string
+
+	cmd := &cobra.Command{
+		Use:          "serve <ir-dir>",
+		Short:        "Serve a browsable web UI over an IR directory on localhost",
+		Args:         cobra.ExactArgs(1),
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			reader, err := ir.OpenDir(args[0])
+			if err != nil {
+				return fmt.Errorf("opening IR directory: %w", err)
+			}
+			srv := serve.New(reader)
+			m := reader.Manifest()
+			log.Printf("Serving %d conversation(s) from %s", len(m.Conversations), args[0])
+			fmt.Printf("dressage serve: http://%s\n", browserAddr(addr))
+			if err := srv.ListenAndServe(addr); err != nil {
+				return fmt.Errorf("serving: %w", err)
+			}
+			return nil
+		},
 	}
-	out := common.output
-	ext := filepath.Ext(out)
-	return strings.TrimSuffix(out, ext) + ".ir"
+
+	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1:7878", "Address to bind the local web server to")
+
+	return cmd
+}
+
+// browserAddr turns a bind address into one suitable for a browser URL: a bare
+// ":port" (bind on all interfaces) is shown as localhost:port.
+func browserAddr(addr string) string {
+	if strings.HasPrefix(addr, ":") {
+		return "localhost" + addr
+	}
+	return addr
 }
 
 // sensitiveFlags are flags whose values may identify or grant access to a

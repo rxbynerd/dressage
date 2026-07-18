@@ -6,8 +6,9 @@ instead of re-fetching or re-parsing provider-native logs. It is the contract
 for consumers; if this document and the emitted output ever disagree, that is a
 bug in Dressage.
 
-Produce it with `--format ir` (or `--format both` alongside the HTML report) —
-see the [README](../README.md#outputs).
+It is the sole output of an ingestion run, written to `--out` (default
+`report.ir`); browse it with `dressage serve <ir-dir>` — see the
+[README](../README.md#outputs).
 
 ## Layout
 
@@ -68,7 +69,7 @@ opening any JSON.
 ## Schema version
 
 Every file embeds `schema_version`, a string of the form
-`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.1`.
+`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.2`.
 
 - Additive, backward-compatible changes (new optional fields, new block types)
   bump **MINOR**.
@@ -77,6 +78,11 @@ Every file embeds `schema_version`, a string of the form
 
 Version history:
 
+- **1.2** — reconstructed **sidechains** (subagent threads) are now carried in
+  each conversation file (`conversation.sidechains[]`), so a consumer renders
+  subagents without joining `turns.parquet`; the manifest's `totals` gained
+  `model_breakdown` / `op_breakdown` maps; and each `conversations[]` index entry
+  gained `display_id`. All additive.
 - **1.1** — raw request/response bodies became **opt-in** (the manifest's
   `raw_bodies` field records the choice; the body `json` fields were always
   optional); added the `files` manifest field and the `facts.parquet` /
@@ -111,9 +117,10 @@ time:
    `provider`, `model_id`, `principal`, and `start_time` (RFC 3339), joined with
    NUL byte separators.
 
-Each conversation also carries `display_id`, the internal `conv-YYYYMMDD-N`
-identifier shown in the HTML report. `display_id` is **run-order dependent** and
-must not be used as a stable key; it exists only to cross-reference the report.
+Each conversation also carries `display_id`, a human-friendly `conv-YYYYMMDD-N`
+label (day plus run-order index). `display_id` is **run-order dependent** and
+must not be used as a stable key; it exists only as a readable handle in
+conversation listings.
 
 **Filenames.** A session id can contain path-significant characters (`/`, `\`,
 `:`) because it comes from user-controlled request fields. The `id` field in the
@@ -129,7 +136,7 @@ yourself.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.1"`. |
+| `schema_version` | string | `"dressage.ir/1.2"`. |
 | `generated_at` | timestamp | When the report was produced. |
 | `tool` | object | `{ "name": "dressage", "version": "<build version>" }`. |
 | `source` | object | Run provenance (below). |
@@ -148,19 +155,22 @@ yourself.
 
 `totals`:
 
-| Field | Type |
-|---|---|
-| `conversations` | integer |
-| `invocations` | integer |
-| `input_tokens` | integer |
-| `output_tokens` | integer |
-| `errors` | integer |
+| Field | Type | Notes |
+|---|---|---|
+| `conversations` | integer | |
+| `invocations` | integer | |
+| `input_tokens` | integer | |
+| `output_tokens` | integer | |
+| `errors` | integer | |
+| `model_breakdown` | object | Map of `model_id` → invocation count across the run. Always a concrete object (`{}` for an empty run). |
+| `op_breakdown` | object | Map of operation name → invocation count across the run. Always a concrete object. |
 
 `conversations[]` (index entry):
 
 | Field | Type | Notes |
 |---|---|---|
 | `id` | string | Stable id (raw, may contain `/` etc. when it is a session id). |
+| `display_id` | string | Human-friendly `conv-YYYYMMDD-N` label (run-order dependent; not a stable key). |
 | `file` | string | Path relative to the IR directory, e.g. `conversations/<name>.json`, where `<name>` is the id passed through a filesystem-safe transform (see [Stable conversation id](#stable-conversation-id)). |
 | `provider` | string | |
 | `model_id` | string | |
@@ -180,9 +190,9 @@ Top-level fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.1"`. |
+| `schema_version` | string | `"dressage.ir/1.2"`. |
 | `id` | string | Stable id (matches the file name and the manifest entry). |
-| `display_id` | string | Internal `conv-…` id for cross-referencing the HTML report. |
+| `display_id` | string | Human-friendly `conv-…` label (run-order dependent; not a stable key). |
 | `session_id` | string | Omitted when absent. |
 | `provider` | string | |
 | `model_id` | string | |
@@ -190,7 +200,8 @@ Top-level fields:
 | `start_time` | timestamp | |
 | `end_time` | timestamp | |
 | `stats` | object | Per-conversation aggregates (below). |
-| `conversation` | object \| null | Reconstructed view, or `null` when not reconstructed (see `reconstructed` and Layer 1 below). |
+| `conversation` | object \| null | Reconstructed main-thread view, or `null` when not reconstructed (see `reconstructed` and Layer 1 below). |
+| `sidechains` | array | Reconstructed subagent threads (below); **omitted** when the conversation has none. |
 | `invocations` | array | Raw request/response pairs; **always populated**. |
 
 `identity`:
@@ -281,6 +292,26 @@ in the request, `inline` is `true` and `byte_size` is the decoded byte length
 (`0` when unknown); the bytes themselves remain in the matching raw body under
 `invocations[]`. `mime_type` is set when the provider declared one.
 
+### `sidechains` (subagent threads)
+
+`sidechains` carries the reconstructed subagent threads spawned within the
+conversation — the same threads that appear in `turns.parquet` with a non-empty
+`thread_id` — so a consumer can render or analyse subagents without joining the
+Parquet table. The field is **omitted** for the common single-thread
+conversation; when present it is a non-empty array. The main thread is never
+listed here (it is the top-level `conversation`).
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | string | The thread id that groups this chain (matches `turns.parquet.thread_id` and `facts.parquet.thread_id`). |
+| `conversation` | object | A full reconstructed view, same shape as the top-level `conversation` (`system_prompt`, `tools`, `turns`). Never `null` — a sidechain that failed to reconstruct is not listed. |
+
+Only session-reconstructed conversations can carry sidechains: deferred and
+time-gap conversations have a `null` `conversation` and no `sidechains`. The
+sidechain turns are deduplicated reconstruction output (not raw resends), so
+this roughly adds the subagents' turn content to a conversation file — bounded,
+unlike embedded raw bodies.
+
 ### Layer 2 — `invocations` (ground truth)
 
 Every underlying request/response pair with its token accounting and, **when
@@ -370,10 +401,9 @@ not reconstructed contribute no rows.
 
 ## Sensitivity
 
-The IR contains full prompts and tool input/output **verbatim** — the same
-content the HTML report exposes, but in a form that flows easily into other
-systems. v1 performs no redaction or PII scrubbing. Treat IR directories as
-sensitive and scope their distribution accordingly.
+The IR contains full prompts and tool input/output **verbatim**, in a form that
+flows easily into other systems. It performs no redaction or PII scrubbing.
+Treat IR directories as sensitive and scope their distribution accordingly.
 
 ## Versioning policy summary
 

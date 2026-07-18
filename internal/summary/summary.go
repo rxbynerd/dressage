@@ -3,13 +3,11 @@
 package summary
 
 import (
-	"encoding/json"
 	"fmt"
 	"iter"
 	"log"
 	"sort"
 	"time"
-	"unicode/utf8"
 
 	"github.com/rxbynerd/dressage/internal/conversation"
 	"github.com/rxbynerd/dressage/internal/model"
@@ -22,12 +20,13 @@ const conversationGap = 5 * time.Minute
 
 // Summarize takes a slice of normalized invocation records and produces a
 // complete Report grouped by day and conversation, with every conversation
-// materialized (reconstruction attached, display bodies rendered). Callers
-// that stream conversations out one at a time — and so never need the whole
-// materialized report in memory — use NewPlan directly instead.
+// materialized (reconstruction attached) and retained. Callers that stream
+// conversations out one at a time — and so never need the whole materialized
+// report in memory — use NewPlan directly instead. Retained here because the
+// IR golden tests and downstream callers want the full report in hand.
 func Summarize(records []model.Record) *model.Report {
 	p := NewPlan(records)
-	for range p.Conversations(MaterializeOptions{RenderBodies: true, Retain: true}) {
+	for range p.Conversations(MaterializeOptions{Retain: true}) {
 	}
 	return p.Report()
 }
@@ -54,9 +53,6 @@ type convPlan struct {
 // MaterializeOptions controls how Plan.Conversations materializes each
 // conversation.
 type MaterializeOptions struct {
-	// RenderBodies builds the 32 KiB-capped pretty-printed body strings used by
-	// the HTML report. Exporters that read raw bodies leave it false.
-	RenderBodies bool
 	// Retain keeps each materialized conversation in the Plan's report (the
 	// Summarize behavior). When false a conversation is dropped after its yield
 	// returns, bounding memory to one conversation at a time.
@@ -137,7 +133,7 @@ func (p *Plan) Conversations(opts MaterializeOptions) iter.Seq[*model.Conversati
 	return func(yield func(*model.ConversationSummary) bool) {
 		for i := range p.convs {
 			cp := &p.convs[i]
-			cs := buildConversationSummary(cp.id, cp.records, opts.RenderBodies)
+			cs := buildConversationSummary(cp.id, cp.records)
 			if cp.sessionID != "" {
 				cs.SessionID = cp.sessionID
 				if detail, sidechains := conversation.ReconstructThreads(cp.records); detail != nil {
@@ -340,9 +336,7 @@ func planConversationsTimeBased(dayRecords []model.Record, dayKey string, startI
 
 // buildConversationSummary creates a ConversationSummary from a slice of
 // chronologically ordered invocation records belonging to one conversation.
-// renderBodies controls whether the display body strings for the HTML report
-// are built; exporters that read raw bodies skip that cost.
-func buildConversationSummary(id string, records []model.Record, renderBodies bool) model.ConversationSummary {
+func buildConversationSummary(id string, records []model.Record) model.ConversationSummary {
 	summary := model.ConversationSummary{
 		ID:           id,
 		Provider:     records[0].Provider,
@@ -361,18 +355,14 @@ func buildConversationSummary(id string, records []model.Record, renderBodies bo
 			summary.ErrorCount++
 		}
 
-		inv := model.Invocation{
-			Timestamp:    rec.Timestamp,
-			RequestID:    rec.RequestID,
-			ModelID:      rec.ModelID,
-			Operation:    rec.Operation,
-			Status:       rec.Status,
-			ErrorCode:    rec.ErrorCode,
-			InputTokens:  rec.Input.TokenCount,
-			OutputTokens: rec.Output.TokenCount,
-			Identity:     rec.Identity.Principal,
-
-			// Preserve the raw record for faithful machine-readable export.
+		// Preserve the raw record verbatim for faithful machine-readable export.
+		invocations = append(invocations, model.Invocation{
+			Timestamp:      rec.Timestamp,
+			RequestID:      rec.RequestID,
+			ModelID:        rec.ModelID,
+			Operation:      rec.Operation,
+			Status:         rec.Status,
+			ErrorCode:      rec.ErrorCode,
 			LatencyMs:      rec.LatencyMs,
 			StopReason:     rec.StopReason,
 			Correlation:    rec.Correlation,
@@ -380,12 +370,7 @@ func buildConversationSummary(id string, records []model.Record, renderBodies bo
 			Input:          rec.Input,
 			Output:         rec.Output,
 			ProviderExtras: rec.ProviderExtras,
-		}
-		if renderBodies {
-			inv.InputBody = renderBody(rec.Input)
-			inv.OutputBody = renderBody(rec.Output)
-		}
-		invocations = append(invocations, inv)
+		})
 	}
 	summary.Invocations = invocations
 	return summary
@@ -427,53 +412,4 @@ func emptyStats() model.Stats {
 		ModelBreakdown: make(map[string]int),
 		OpBreakdown:    make(map[string]int),
 	}
-}
-
-// maxRenderedBodyBytes bounds the pretty-printed size of a single raw
-// request/response body embedded in the "Raw Invocations" drill-down. It is a
-// defensive cap: some providers (notably the local "claude" raw-body capture,
-// where Claude Code resends the entire running transcript on every turn) produce
-// invocation bodies that grow to megabytes and repeat across every turn, which
-// would otherwise blow the self-contained HTML report up to gigabytes. Typical
-// single-turn provider bodies fall well under this limit and are never touched.
-// Reconstruction is unaffected: it reads the raw JSON directly, not this
-// rendered string.
-const maxRenderedBodyBytes = 32 * 1024
-
-// renderBody pretty-prints a body's payload for the report, truncating the
-// result to maxRenderedBodyBytes with a marker noting the original size.
-// Truncation is on a rune boundary so the embedded HTML stays valid UTF-8. A
-// lazy body whose source fails to load renders a marker instead of content.
-func renderBody(b model.Body) string {
-	raw, err := b.Load()
-	if err != nil {
-		return fmt.Sprintf("(body unavailable: %v)", err)
-	}
-	s := prettyJSON(raw)
-	if len(s) <= maxRenderedBodyBytes {
-		return s
-	}
-	cut := maxRenderedBodyBytes
-	for cut > 0 && !utf8.RuneStart(s[cut]) {
-		cut--
-	}
-	return fmt.Sprintf("%s\n\n… truncated (%d of %d bytes shown; full body available in the reconstructed conversation view)",
-		s[:cut], cut, len(s))
-}
-
-// prettyJSON attempts to pretty-print a JSON raw message.
-// If the input is nil, empty, or invalid JSON, it returns the raw string as-is.
-func prettyJSON(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var v any
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return string(raw)
-	}
-	pretty, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return string(raw)
-	}
-	return string(pretty)
 }

@@ -1,0 +1,146 @@
+{
+  "schema_version": "dressage.ir/1.2",
+  "id": "claude-sess-1",
+  "display_id": "conv-20240115-2",
+  "session_id": "claude-sess-1",
+  "provider": "claude",
+  "model_id": "claude-opus-4-6",
+  "identity": {
+    "principal": "acct-42"
+  },
+  "start_time": "2024-01-15T10:04:00Z",
+  "end_time": "2024-01-15T10:04:10Z",
+  "stats": {
+    "invocation_count": 2,
+    "input_tokens": 42,
+    "output_tokens": 23,
+    "cache_read_tokens": 8,
+    "cache_write_tokens": 3,
+    "error_count": 0
+  },
+  "conversation": {
+    "system_prompt": "",
+    "tools": [],
+    "turns": [
+      {
+        "role": "user",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Plan the refactor and delegate the research."
+          }
+        ]
+      },
+      {
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "Delegating repo exploration to a subagent."
+          }
+        ],
+        "metrics": {
+          "timestamp": "2024-01-15T10:04:00Z",
+          "request_id": "req-claude-main-1",
+          "model_id": "claude-opus-4-6",
+          "input_tokens": 30,
+          "output_tokens": 14,
+          "cache_read_tokens": 8,
+          "cache_write_tokens": 3,
+          "latency_ms": 0,
+          "first_byte_ms": 0,
+          "stop_reason": "tool_use"
+        }
+      }
+    ]
+  },
+  "sidechains": [
+    {
+      "id": "chain-sub",
+      "conversation": {
+        "system_prompt": "",
+        "tools": [],
+        "turns": [
+          {
+            "role": "user",
+            "blocks": [
+              {
+                "type": "text",
+                "text": "Explore internal/ir and report back."
+              }
+            ]
+          },
+          {
+            "role": "assistant",
+            "blocks": [
+              {
+                "type": "text",
+                "text": "internal/ir holds ir.go, map.go, and export.go."
+              }
+            ],
+            "metrics": {
+              "timestamp": "2024-01-15T10:04:10Z",
+              "request_id": "req-claude-sub-1",
+              "model_id": "claude-opus-4-6",
+              "input_tokens": 12,
+              "output_tokens": 9,
+              "cache_read_tokens": 0,
+              "cache_write_tokens": 0,
+              "latency_ms": 0,
+              "first_byte_ms": 0,
+              "stop_reason": "end_turn"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "invocations": [
+    {
+      "timestamp": "2024-01-15T10:04:00Z",
+      "request_id": "req-claude-main-1",
+      "model_id": "claude-opus-4-6",
+      "operation": "messages",
+      "status": "200",
+      "identity": {
+        "principal": "acct-42"
+      },
+      "latency_ms": 0,
+      "input": {
+        "content_type": "application/json",
+        "token_count": 30,
+        "cache_read": 8,
+        "cache_write": 3
+      },
+      "output": {
+        "content_type": "application/json",
+        "token_count": 14,
+        "cache_read": 0,
+        "cache_write": 0
+      }
+    },
+    {
+      "timestamp": "2024-01-15T10:04:10Z",
+      "request_id": "req-claude-sub-1",
+      "model_id": "claude-opus-4-6",
+      "operation": "messages",
+      "status": "200",
+      "identity": {
+        "principal": "acct-42"
+      },
+      "latency_ms": 0,
+      "input": {
+        "content_type": "application/json",
+        "token_count": 12,
+        "cache_read": 0,
+        "cache_write": 0
+      },
+      "output": {
+        "content_type": "application/json",
+        "token_count": 9,
+        "cache_read": 0,
+        "cache_write": 0
+      }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 {
-  "schema_version": "dressage.ir/1.1",
+  "schema_version": "dressage.ir/1.2",
   "generated_at": "2024-01-20T12:00:00Z",
   "tool": {
     "name": "dressage",
@@ -7,7 +7,7 @@
   },
   "source": {
     "provider": "bedrock",
-    "command": "dressage bedrock --bucket my-logs --format ir",
+    "command": "dressage bedrock --bucket my-logs --out report.ir",
     "date_range": {
       "start": "2024-01-15",
       "end": "2024-01-15"
@@ -19,15 +19,28 @@
     "turns": "turns.parquet"
   },
   "totals": {
-    "conversations": 4,
-    "invocations": 4,
-    "input_tokens": 80,
-    "output_tokens": 18,
-    "errors": 0
+    "conversations": 5,
+    "invocations": 6,
+    "input_tokens": 122,
+    "output_tokens": 41,
+    "errors": 0,
+    "model_breakdown": {
+      "claude-opus-4-6": 4,
+      "gemini-2.0-flash": 1,
+      "gpt-4o": 1
+    },
+    "op_breakdown": {
+      "ChatCompletions_Create": 1,
+      "Converse": 1,
+      "generateContent": 1,
+      "messages": 2,
+      "rawPredict": 1
+    }
   },
   "conversations": [
     {
       "id": "bedrock-sess-1",
+      "display_id": "conv-20240115-1",
       "file": "conversations/bedrock-sess-1.json",
       "provider": "bedrock",
       "model_id": "claude-opus-4-6",
@@ -43,6 +56,7 @@
     },
     {
       "id": "azure-sess-1",
+      "display_id": "conv-20240115-0",
       "file": "conversations/azure-sess-1.json",
       "provider": "azure",
       "model_id": "gpt-4o",
@@ -58,6 +72,7 @@
     },
     {
       "id": "gemini-sess-1",
+      "display_id": "conv-20240115-3",
       "file": "conversations/gemini-sess-1.json",
       "provider": "vertex",
       "model_id": "gemini-2.0-flash",
@@ -73,6 +88,7 @@
     },
     {
       "id": "c135963494d637fd",
+      "display_id": "conv-20240115-4",
       "file": "conversations/c135963494d637fd.json",
       "provider": "vertex",
       "model_id": "claude-opus-4-6",
@@ -84,6 +100,22 @@
       "output_tokens": 2,
       "error_count": 0,
       "reconstructed": false
+    },
+    {
+      "id": "claude-sess-1",
+      "display_id": "conv-20240115-2",
+      "file": "conversations/claude-sess-1.json",
+      "provider": "claude",
+      "model_id": "claude-opus-4-6",
+      "session_id": "claude-sess-1",
+      "start_time": "2024-01-15T10:04:00Z",
+      "end_time": "2024-01-15T10:04:10Z",
+      "turn_count": 2,
+      "invocation_count": 2,
+      "input_tokens": 42,
+      "output_tokens": 23,
+      "error_count": 0,
+      "reconstructed": true
     }
   ]
 }

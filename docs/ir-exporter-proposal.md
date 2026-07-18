@@ -1,9 +1,18 @@
 # Proposal: Dressage as a Conversation IR Exporter
 
-**Status:** Draft / proposal
+**Status:** Historical — implemented, then superseded in part.
 **Author:** (drafted with Claude)
 **Date:** 2026-06-01
 **Audience:** Dressage maintainers; authors of the future analysis program(s).
+
+> **Note (later):** this proposal introduced the IR as a *second* output
+> alongside the HTML report, behind a `--format html|ir|both` flag. The IR
+> landed as described, but the HTML report has since been **retired**: the IR is
+> now the sole ingestion output (`--out`), and `dressage serve` renders it as a
+> web UI. Where this document says "HTML report", "`--format`", or
+> "`report.Generate`", read the current [ir-format.md](ir-format.md) and
+> [README](../README.md) instead. The rationale below is kept as the original
+> design record.
 
 ## Summary
 

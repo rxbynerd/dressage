@@ -1,9 +1,9 @@
 // Package ir defines the machine-readable Intermediate Representation (IR) of a
 // Dressage report: a stable, versioned, provider-neutral JSON schema that a
-// downstream analysis program consumes instead of re-fetching or re-parsing the
-// provider-native logs. The IR branches off the same *model.Report as the HTML
-// report (parallel to internal/report) and is written as a directory of one
-// JSON file per conversation plus a manifest index (see Export).
+// downstream analysis program (or dressage serve) consumes instead of
+// re-fetching or re-parsing the provider-native logs. The IR is built from a
+// *model.Report and written as a directory of one JSON file per conversation
+// plus a manifest index (see Export); read back via Reader (see OpenDir).
 //
 // Field names are snake_case throughout (idiomatic for the cross-language
 // consumers we expect). Raw provider bodies embed as inline JSON
@@ -23,7 +23,12 @@ import (
 //
 // 1.1: raw request/response bodies became opt-in (manifest raw_bodies records
 // the choice; the body json fields were always optional).
-const SchemaVersion = "dressage.ir/1.1"
+// 1.2: reconstructed sidechains (subagent threads) are carried in each
+// conversation file (conversation.sidechains[]); the manifest totals gained
+// model_breakdown / op_breakdown maps and each conversation entry gained
+// display_id. All additive — a 1.x consumer that ignores unknown fields is
+// unaffected.
+const SchemaVersion = "dressage.ir/1.2"
 
 // Values of Manifest.RawBodies.
 const (
@@ -78,19 +83,25 @@ type ManifestDateRng struct {
 	End   string `json:"end"`
 }
 
-// ManifestTotals holds the report-wide aggregate counters.
+// ManifestTotals holds the report-wide aggregate counters. ModelBreakdown and
+// OpBreakdown map a model id / operation name to its invocation count across the
+// whole run; both are always non-nil objects (empty for a zero-conversation
+// run) so a consumer never has to distinguish {} from null.
 type ManifestTotals struct {
-	Conversations int   `json:"conversations"`
-	Invocations   int   `json:"invocations"`
-	InputTokens   int64 `json:"input_tokens"`
-	OutputTokens  int64 `json:"output_tokens"`
-	Errors        int   `json:"errors"`
+	Conversations  int            `json:"conversations"`
+	Invocations    int            `json:"invocations"`
+	InputTokens    int64          `json:"input_tokens"`
+	OutputTokens   int64          `json:"output_tokens"`
+	Errors         int            `json:"errors"`
+	ModelBreakdown map[string]int `json:"model_breakdown"`
+	OpBreakdown    map[string]int `json:"op_breakdown"`
 }
 
 // ManifestEntry is one conversation's index entry: enough to triage, shard, and
 // locate the full conversation file without opening it.
 type ManifestEntry struct {
 	ID              string    `json:"id"`
+	DisplayID       string    `json:"display_id"` // human-friendly conv-YYYYMMDD-N label (run-order-dependent; not a stable key)
 	File            string    `json:"file"`
 	Provider        string    `json:"provider"`
 	ModelID         string    `json:"model_id"`
@@ -111,7 +122,7 @@ type ManifestEntry struct {
 type ConversationIR struct {
 	SchemaVersion string     `json:"schema_version"`
 	ID            string     `json:"id"`
-	DisplayID     string     `json:"display_id"` // internal conv-... id, for cross-referencing the HTML report
+	DisplayID     string     `json:"display_id"` // human-friendly conv-YYYYMMDD-N label (run-order-dependent; not a stable key)
 	SessionID     string     `json:"session_id,omitempty"`
 	Provider      string     `json:"provider"`
 	ModelID       string     `json:"model_id"`
@@ -120,13 +131,28 @@ type ConversationIR struct {
 	EndTime       time.Time  `json:"end_time"`
 	Stats         StatsIR    `json:"stats"`
 
-	// Conversation is the reconstructed view; nil (JSON null) when no
+	// Conversation is the reconstructed main-thread view; nil (JSON null) when no
 	// ConversationDetail was reconstructed (e.g. deferred providers).
 	Conversation *ConversationView `json:"conversation"`
+
+	// Sidechains are the reconstructed subagent threads spawned within this
+	// conversation, each a full ConversationView of its own. Omitted (absent)
+	// when the conversation has none — the common single-thread case. The same
+	// turns also appear in turns.parquet (thread_id != ""); this field lets a
+	// conversation page render subagents without a Parquet join.
+	Sidechains []SidechainIR `json:"sidechains,omitempty"`
 
 	// Invocations is the ground-truth layer: every request/response pair with
 	// raw provider bodies embedded inline. Always populated.
 	Invocations []InvocationIR `json:"invocations"`
+}
+
+// SidechainIR is one reconstructed subagent thread: its id (the fetcher-assigned
+// thread id that groups the chain) plus a full reconstructed view. Conversation
+// is non-nil (a sidechain that failed to reconstruct is dropped upstream).
+type SidechainIR struct {
+	ID           string            `json:"id"`
+	Conversation *ConversationView `json:"conversation"`
 }
 
 // IdentityIR is the principal that made the invocations, normalized across

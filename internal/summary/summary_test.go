@@ -278,27 +278,6 @@ func TestSummarizeVertexGeminiAndDeferredClaude(t *testing.T) {
 	}
 }
 
-func TestPrettyJSON(t *testing.T) {
-	cases := []struct {
-		name  string
-		input json.RawMessage
-		want  string
-	}{
-		{"nil", nil, ""},
-		{"empty", json.RawMessage{}, ""},
-		{"object", json.RawMessage(`{"a":1}`), "{\n  \"a\": 1\n}"},
-		{"invalid", json.RawMessage(`not-json`), "not-json"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := prettyJSON(tc.input)
-			if got != tc.want {
-				t.Errorf("prettyJSON(%q) = %q, want %q", tc.input, got, tc.want)
-			}
-		})
-	}
-}
-
 // planCountingSource is a BodySource double that counts loads, for asserting
 // grouping does no body IO.
 type planCountingSource struct {
@@ -355,9 +334,6 @@ func TestNewPlanMatchesSummarize(t *testing.T) {
 	var got []string
 	for cs := range plan.Conversations(MaterializeOptions{}) {
 		got = append(got, cs.ID)
-		if cs.Invocations[0].InputBody != "" || cs.Invocations[0].OutputBody != "" {
-			t.Errorf("conversation %s has rendered bodies without RenderBodies", cs.ID)
-		}
 	}
 	if len(got) != len(want) {
 		t.Fatalf("streamed %d conversations, want %d", len(got), len(want))

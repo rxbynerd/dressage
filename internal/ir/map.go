@@ -36,7 +36,26 @@ func mapConversation(cs model.ConversationSummary, opts ExportOptions) Conversat
 	if cs.Detail != nil {
 		conv.Conversation = mapDetail(cs.Detail)
 	}
+	conv.Sidechains = mapSidechains(cs.Sidechains)
 	return conv
+}
+
+// mapSidechains translates a conversation's reconstructed subagent threads into
+// the IR view. Threads that failed to reconstruct (nil Detail) are skipped,
+// mirroring mapTurns; an empty result returns nil so the omitempty field
+// disappears for the common single-thread conversation.
+func mapSidechains(threads []model.Thread) []SidechainIR {
+	out := make([]SidechainIR, 0, len(threads))
+	for _, t := range threads {
+		if t.Detail == nil {
+			continue
+		}
+		out = append(out, SidechainIR{ID: t.ID, Conversation: mapDetail(t.Detail)})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // mapEntry builds the lightweight manifest index entry for a conversation. It
@@ -47,6 +66,7 @@ func mapConversation(cs model.ConversationSummary, opts ExportOptions) Conversat
 func mapEntry(conv ConversationIR, file string) ManifestEntry {
 	entry := ManifestEntry{
 		ID:              conv.ID,
+		DisplayID:       conv.DisplayID,
 		File:            file,
 		Provider:        conv.Provider,
 		ModelID:         conv.ModelID,

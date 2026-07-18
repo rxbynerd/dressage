@@ -212,9 +212,8 @@ Logs, which is out of scope.
 
 ## Usage
 
-`--start`, `--end`, and `--output` are persistent (root) flags and may appear
-before or after the `vertex` subcommand. The Vertex-specific flags are local to
-`vertex`.
+`--start`, `--end`, `--out`, and `--raw-bodies` are ingestion flags shared by
+every provider subcommand. The Vertex-specific flags are local to `vertex`.
 
 ```bash
 # Analyze all Gemini invocations in a logging table (ADC credentials)
@@ -231,24 +230,25 @@ dressage vertex \
   --location us-central1 \
   --start 2025-03-01 --end 2025-03-15
 
-# Use an explicit service-account key and write to a named file
+# Use an explicit service-account key and write to a named IR directory
 dressage vertex \
   --project my-gcp-project \
   --dataset vertex_logging \
   --table request_response_logging \
   --credentials /path/to/key.json \
-  --output march-report.html
+  --out march.ir
 ```
 
 ### Flags
 
-Persistent (root) flags, shared with every provider:
+Ingestion flags, shared by every provider subcommand:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
-| `--output` | `report.html` | Output HTML file path |
+| `--out` | `report.ir` | IR output directory |
+| `--raw-bodies` | `omit` | Embed verbatim request/response JSON in the IR: `omit` or `embed` |
 
 `vertex`-specific flags:
 

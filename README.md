@@ -1,6 +1,6 @@
 # dressage
 
-Analyze hosted LLM model invocation logs to investigate opportunities for developing and improving coding harnesses. Dressage fetches logs from a provider, normalizes them into a provider-neutral record, groups them into conversations, and generates a self-contained HTML report with per-day summaries and drill-down into individual request/response pairs. The conversation grouping and HTML drill-down are provider-agnostic; only the fetcher and the on-the-wire log schema differ per provider. AWS Bedrock is the first supported provider, with others on the way.
+Analyze hosted LLM model invocation logs to investigate opportunities for developing and improving coding harnesses. Dressage fetches logs from a provider, normalizes them into a provider-neutral record, groups them into conversations, and exports a stable, versioned **IR** (Intermediate Representation) directory: one JSON file per conversation plus a manifest and two Parquet tables. `dressage serve` then presents that IR as a browsable, localhost-only web UI with per-day summaries and drill-down into individual request/response pairs. Everything after the fetcher is provider-agnostic; only the fetcher and the on-the-wire log schema differ per provider. AWS Bedrock is the first supported provider, with others on the way.
 
 ## Supported providers
 
@@ -14,7 +14,7 @@ Analyze hosted LLM model invocation logs to investigate opportunities for develo
 
 ## Prerequisites
 
-- Go 1.23+ (only to build from source)
+- Go 1.25+ (only to build from source)
 - Credentials and read access for the provider you are analyzing (see the
   provider's docs page, e.g. [Bedrock](docs/providers/bedrock.md))
 
@@ -47,16 +47,14 @@ dressage claude [--dir ~/.claude/raw-api-bodies] [flags]
 
 ### Flags
 
-`--start`, `--end`, `--output`, `--format`, and `--ir-dir` are persistent (root)
-flags shared by every provider and may be given before or after the subcommand:
+Every provider subcommand shares these ingestion flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--start` | | Start date filter (YYYY-MM-DD, inclusive) |
 | `--end` | | End date filter (YYYY-MM-DD, inclusive) |
-| `--output` | `report.html` | Output HTML file path |
-| `--format` | `html` | Output format: `html`, `ir`, or `both` (see [Outputs](#outputs)) |
-| `--ir-dir` | derived | IR output directory (default: `--output` with its extension replaced by `.ir`) |
+| `--out` | `report.ir` | IR output directory |
+| `--raw-bodies` | `omit` | Embed verbatim request/response JSON in the IR: `omit` or `embed` (see [Outputs](#outputs)) |
 
 The `bedrock` subcommand adds S3-specific flags:
 
@@ -121,8 +119,8 @@ dressage bedrock --bucket my-bedrock-logs
 # Filter to a specific date range using a named AWS profile
 dressage bedrock --bucket my-bedrock-logs --profile dev --start 2025-03-01 --end 2025-03-15
 
-# Specify a prefix and output path
-dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --output march-report.html
+# Specify a prefix and IR output directory
+dressage bedrock --bucket my-bedrock-logs --prefix prod/AWSLogs --out march.ir
 
 # Analyze Azure OpenAI logs from a Log Analytics workspace
 dressage azure --workspace 11111111-2222-3333-4444-555555555555
@@ -151,22 +149,11 @@ session-grouping and cache-write caveats.
 
 ## Outputs
 
-Dressage produces two kinds of output from a single fetch, selected with
-`--format`:
-
-| `--format` | Writes | For |
-|------------|--------|-----|
-| `html` (default) | the HTML report at `--output` | humans |
-| `ir` | the IR directory only | downstream tooling |
-| `both` | the HTML report **and** the IR directory | both, from one fetch |
-
-Ingestion (S3 / BigQuery / Log Analytics calls) is the expensive part, so
-`--format both` is the way to get both artifacts without fetching twice.
-
-The **IR** (Intermediate Representation) is a stable, versioned, provider-neutral
-export of the same conversations the report shows, intended for a separate
-analysis program (judging, classification, signal extraction) to consume without
-re-fetching or re-parsing provider-native logs. Its directory layout is:
+An ingestion run writes one output: the **IR** (Intermediate Representation)
+directory at `--out`. The IR is a stable, versioned, provider-neutral export of
+the fetched conversations, for both `dressage serve` (below) and any separate
+analysis program (judging, classification, signal extraction) that consumes it
+without re-fetching or re-parsing provider-native logs. Its directory layout is:
 
 ```
 report.ir/
@@ -178,37 +165,50 @@ report.ir/
     └── …
 ```
 
-`--ir-dir` overrides the destination; by default it is the `--output` path with
-its extension replaced by `.ir` (so `--output march.html` yields `march.ir/`).
 Each conversation file carries the reconstructed conversation (system prompt,
-tools, turns of typed blocks, per-turn metrics) and per-invocation metadata;
-the two Parquet tables serve analytical engines directly (see
-[docs/duckdb-cookbook.md](docs/duckdb-cookbook.md)). Raw request/response
-payloads are omitted by default — `--raw-bodies embed` restores verbatim
-embedding, and the manifest records the mode. The full schema — every field,
-the block-type table, the stable-id rule, and the versioning policy — is
+tools, turns of typed blocks, per-turn metrics, plus any subagent sidechains)
+and per-invocation metadata; the two Parquet tables serve analytical engines
+directly (see [docs/duckdb-cookbook.md](docs/duckdb-cookbook.md)). Raw
+request/response payloads are omitted by default — `--raw-bodies embed` restores
+verbatim embedding, and the manifest records the mode. The full schema — every
+field, the block-type table, the stable-id rule, and the versioning policy — is
 documented in [docs/ir-format.md](docs/ir-format.md).
 
 ```bash
-# Emit both the human report and the machine IR from one fetch.
+# Ingest one month into an IR directory, embedding raw bodies.
 dressage bedrock --bucket my-bedrock-logs \
   --start 2026-05-01 --end 2026-05-31 \
-  --format both --output may-report.html      # IR -> ./may-report.ir/
+  --out may.ir --raw-bodies embed
 ```
 
-> The IR contains full prompts and tool I/O verbatim (the same content the HTML
-> report exposes). v1 performs no redaction; treat IR directories as sensitive.
+> The IR contains full prompts and tool I/O verbatim. It performs no redaction;
+> treat IR directories as sensitive.
 
-## Report Structure
+## Viewing an IR — `dressage serve`
 
-The generated HTML report is a single self-contained file (no external dependencies) with three levels of drill-down:
+`dressage serve <ir-dir>` starts a local, server-rendered web UI over an IR
+directory. It reads the manifest for the index and one conversation file per
+request, so peak memory stays bounded to a single conversation no matter how
+large the capture — a 25 GB capture's IR browses the same as a small one. It is
+a local developer tool: no authentication, no TLS. Bind it to loopback.
 
-1. **Header** - Overall stats: total invocations, tokens, errors, date range, breakdowns by model and operation type
-2. **Day cards** - One collapsible section per day showing invocation count, token totals, and conversation count
-3. **Conversations** - Within each day, records are grouped into conversations (same provider, model, and identity, within 5-minute gaps). Shows message count, token usage, and time range
-4. **Invocations** - Each individual request/response pair with pretty-printed JSON bodies, operation type, status, and token counts
+```bash
+dressage serve may.ir                 # http://127.0.0.1:7878
+dressage serve may.ir --addr 127.0.0.1:9000
+```
 
-All drill-down uses native HTML `<details>/<summary>` elements - no JavaScript required.
+The UI has two views, both using native HTML `<details>/<summary>` drill-down
+with no JavaScript:
+
+- **Index** (`/`) — overall stats (invocations, tokens, errors) with breakdowns
+  by model and operation, one collapsible card per UTC day, and a link to each
+  conversation.
+- **Conversation** (`/conversations/<id>`) — the reconstructed conversation
+  (system prompt, available tools, turns of typed content blocks with per-turn
+  metrics), any subagent sidechains, and the raw request/response invocations.
+  When the IR was exported with `--raw-bodies embed`, each invocation shows a
+  pretty-printed body preview plus a link to its full verbatim JSON; otherwise
+  it shows token/cache metadata and a note.
 
 ## License
 

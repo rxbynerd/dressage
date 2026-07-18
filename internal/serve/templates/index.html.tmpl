@@ -1,0 +1,102 @@
+{{define "content"}}
+<div class="header">
+  <h1>{{if .Provider}}{{.Provider}} — {{end}}invocation log</h1>
+  <div class="meta">
+    Generated {{.GeneratedAt.Format "2006-01-02 15:04:05 MST"}}
+    {{if .HasSpan}} &middot; {{.SpanStart.Format "2006-01-02"}} to {{.SpanEnd.Format "2006-01-02"}}{{end}}
+    {{if .Command}}<br>{{.Command}}{{end}}
+  </div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Invocations</div>
+      <div class="value">{{.Totals.Invocations}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Input Tokens</div>
+      <div class="value">{{formatInt .Totals.InputTokens}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Output Tokens</div>
+      <div class="value">{{formatInt .Totals.OutputTokens}}</div>
+    </div>
+    <div class="stat-card{{if gt .Totals.Errors 0}} error{{end}}">
+      <div class="label">Errors</div>
+      <div class="value">{{.Totals.Errors}}</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Conversations</div>
+      <div class="value">{{.Totals.Conversations}}</div>
+    </div>
+  </div>
+  {{if or .Totals.ModelBreakdown .Totals.OpBreakdown}}
+  <div class="breakdown">
+    {{if .Totals.ModelBreakdown}}
+    <div class="breakdown-section">
+      <h3>By Model</h3>
+      <ul class="breakdown-list">
+        {{range $model, $count := .Totals.ModelBreakdown}}
+        <li><span>{{shortModel $model}}</span> <span class="count">{{$count}}</span></li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+    {{if .Totals.OpBreakdown}}
+    <div class="breakdown-section">
+      <h3>By Operation</h3>
+      <ul class="breakdown-list">
+        {{range $op, $count := .Totals.OpBreakdown}}
+        <li><span>{{$op}}</span> <span class="count">{{$count}}</span></li>
+        {{end}}
+      </ul>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+  {{if eq .RawBodies "omitted"}}
+  <div class="note">Raw request/response bodies were not embedded in this export. Re-run ingestion with <code>--raw-bodies embed</code> to inspect wire payloads.</div>
+  {{end}}
+</div>
+
+{{if not .Days}}
+<div class="empty">No conversations in this IR directory.</div>
+{{end}}
+
+{{range .Days}}
+<details class="day-card" open>
+  <summary class="day-header">
+    <div>
+      <span class="arrow">&#9654;</span>
+      <span class="day-date">{{.Date.Format "2006-01-02"}}</span>
+    </div>
+    <div class="day-stats">
+      <div>Invocations: <span>{{.InvocationCount}}</span></div>
+      <div>In: <span>{{formatInt .InputTokens}}</span></div>
+      <div>Out: <span>{{formatInt .OutputTokens}}</span></div>
+      {{if gt .ErrorCount 0}}<div>Errors: <span style="color:var(--error)">{{.ErrorCount}}</span></div>{{end}}
+      <div>Conversations: <span>{{len .Conversations}}</span></div>
+    </div>
+  </summary>
+  <div class="day-body">
+    {{range .Conversations}}
+    <div class="conv-card">
+      <a class="conv-header" href="/conversations/{{.Name}}">
+        <div class="inv-meta">
+          <span class="conv-id">{{if .Entry.DisplayID}}{{.Entry.DisplayID}}{{else}}{{.Entry.ID}}{{end}}</span>
+          <span class="conv-model">{{shortModel .Entry.ModelID}}</span>
+          {{if .Entry.SessionID}}<span class="conv-session">session:{{shortSession .Entry.SessionID}}</span>{{end}}
+          {{if not .Entry.Reconstructed}}<span class="conv-deferred">not reconstructed</span>{{end}}
+        </div>
+        <div class="conv-stats">
+          <div>{{if .Entry.Reconstructed}}Turns: <span>{{.Entry.TurnCount}}</span>{{else}}Invocations: <span>{{.Entry.InvocationCount}}</span>{{end}}</div>
+          <div>Invocations: <span>{{.Entry.InvocationCount}}</span></div>
+          <div>In: <span>{{formatInt .Entry.InputTokens}}</span></div>
+          <div>Out: <span>{{formatInt .Entry.OutputTokens}}</span></div>
+          <div>{{.Entry.StartTime.Format "15:04:05"}} &ndash; {{.Entry.EndTime.Format "15:04:05"}}</div>
+        </div>
+      </a>
+    </div>
+    {{end}}
+  </div>
+</details>
+{{end}}
+{{end}}

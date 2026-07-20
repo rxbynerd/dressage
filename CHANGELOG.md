@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Cache-token breakdowns in the headline counts. The `dressage serve` index now
+  shows cache read/write tokens under the run's Input Tokens card and on each
+  day rollup and conversation row; the conversation page header shows both
+  cache counters (it previously showed cache reads only, dropping writes). The
+  ingestion stdout summary prints the same breakdown. Backed by IR schema
+  `dressage.ir/1.3` (additive): the manifest's `totals` and each
+  `conversations[]` index entry gained `cache_read_tokens` /
+  `cache_write_tokens`, mirroring the per-conversation `stats` block. Cache
+  counters follow each provider's own accounting (Anthropic/Bedrock report them
+  alongside `input_tokens`; OpenAI/Gemini report cache reads as a subset of the
+  prompt count), so they are carried as separate totals rather than folded into
+  `input_tokens`. See [docs/ir-format.md](docs/ir-format.md).
 - `dressage serve <ir-dir>`: a localhost-only, server-rendered web UI over an IR
   directory — the replacement for the retired static HTML report. It reads the
   manifest for the index and one conversation file per request, so a viewer's

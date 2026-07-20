@@ -30,12 +30,14 @@ type indexView struct {
 // dayView is one UTC day's card on the index: its date, summed counters, and
 // the conversations that started that day (as links, not inlined content).
 type dayView struct {
-	Date            time.Time
-	InvocationCount int
-	InputTokens     int64
-	OutputTokens    int64
-	ErrorCount      int
-	Conversations   []convLink
+	Date             time.Time
+	InvocationCount  int
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	ErrorCount       int
+	Conversations    []convLink
 }
 
 // convLink is a single conversation's index row: the URL-safe name to link to
@@ -82,6 +84,8 @@ func buildIndexView(m *ir.Manifest) indexView {
 		d.InvocationCount += e.InvocationCount
 		d.InputTokens += e.InputTokens
 		d.OutputTokens += e.OutputTokens
+		d.CacheReadTokens += e.CacheReadTokens
+		d.CacheWriteTokens += e.CacheWriteTokens
 		d.ErrorCount += e.ErrorCount
 		d.Conversations = append(d.Conversations, convLink{Name: e.Name(), Entry: e})
 	}

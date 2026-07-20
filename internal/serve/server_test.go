@@ -33,7 +33,7 @@ func fixtureRecords() []model.Record {
 			SessionID:   "sess-serve",
 			Correlation: model.Correlation{ThreadID: "chain-main", MessageID: "msg_m", RequestUUID: "chain-main", NumMessages: 1},
 			Identity:    model.Identity{Principal: "acct-serve"},
-			Input:       model.Body{JSON: json.RawMessage(mainIn), ContentType: "application/json", TokenCount: 30, CacheRead: 8},
+			Input:       model.Body{JSON: json.RawMessage(mainIn), ContentType: "application/json", TokenCount: 30, CacheRead: 8, CacheWrite: 3},
 			Output:      model.Body{JSON: json.RawMessage(mainOut), ContentType: "application/json", TokenCount: 14},
 		},
 		{
@@ -84,6 +84,9 @@ func TestIndexPage(t *testing.T) {
 		"conv-20240302",                    // a display_id
 		"By Model",                         // the model breakdown section
 		`href="/conversations/sess-serve"`, // the conversation link
+		"cache read 8 &middot; write 3",    // the input-tokens card breakdown
+		"Cache-read: <span>8</span>",       // day rollup / conversation row breakdown
+		"Cache-write: <span>3</span>",      // day rollup / conversation row breakdown
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("index page missing %q", want)
@@ -106,6 +109,8 @@ func TestConversationPage(t *testing.T) {
 		"parser.go defines three functions.",    // a sidechain turn
 		"Raw Invocations",                       // the raw section
 		"/conversations/sess-serve/raw/0/input", // a raw-body link (bodies embedded)
+		"Cache-read: <span>8</span>",            // header stats cache breakdown
+		"Cache-write: <span>3</span>",           // header stats cache breakdown
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("conversation page missing %q", want)

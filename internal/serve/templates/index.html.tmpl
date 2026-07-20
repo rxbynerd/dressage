@@ -14,6 +14,9 @@
     <div class="stat-card">
       <div class="label">Input Tokens</div>
       <div class="value">{{formatInt .Totals.InputTokens}}</div>
+      {{if or (gt .Totals.CacheReadTokens 0) (gt .Totals.CacheWriteTokens 0)}}
+      <div class="sub">cache read {{formatInt .Totals.CacheReadTokens}} &middot; write {{formatInt .Totals.CacheWriteTokens}}</div>
+      {{end}}
     </div>
     <div class="stat-card">
       <div class="label">Output Tokens</div>
@@ -71,6 +74,8 @@
     <div class="day-stats">
       <div>Invocations: <span>{{.InvocationCount}}</span></div>
       <div>In: <span>{{formatInt .InputTokens}}</span></div>
+      {{if gt .CacheReadTokens 0}}<div>Cache-read: <span>{{formatInt .CacheReadTokens}}</span></div>{{end}}
+      {{if gt .CacheWriteTokens 0}}<div>Cache-write: <span>{{formatInt .CacheWriteTokens}}</span></div>{{end}}
       <div>Out: <span>{{formatInt .OutputTokens}}</span></div>
       {{if gt .ErrorCount 0}}<div>Errors: <span style="color:var(--error)">{{.ErrorCount}}</span></div>{{end}}
       <div>Conversations: <span>{{len .Conversations}}</span></div>
@@ -90,6 +95,8 @@
           <div>{{if .Entry.Reconstructed}}Turns: <span>{{.Entry.TurnCount}}</span>{{else}}Invocations: <span>{{.Entry.InvocationCount}}</span>{{end}}</div>
           <div>Invocations: <span>{{.Entry.InvocationCount}}</span></div>
           <div>In: <span>{{formatInt .Entry.InputTokens}}</span></div>
+          {{if gt .Entry.CacheReadTokens 0}}<div>Cache-read: <span>{{formatInt .Entry.CacheReadTokens}}</span></div>{{end}}
+          {{if gt .Entry.CacheWriteTokens 0}}<div>Cache-write: <span>{{formatInt .Entry.CacheWriteTokens}}</span></div>{{end}}
           <div>Out: <span>{{formatInt .Entry.OutputTokens}}</span></div>
           <div>{{.Entry.StartTime.Format "15:04:05"}} &ndash; {{.Entry.EndTime.Format "15:04:05"}}</div>
         </div>

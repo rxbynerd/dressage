@@ -409,7 +409,8 @@ func runReport(ctx context.Context, fetcher fetch.Fetcher, provider string, comm
 	fmt.Printf("  View it with: dressage serve %s\n", irDir)
 	fmt.Printf("  Date range:   %s to %s\n", rpt.DateRange.Start.Format(dateFormat), rpt.DateRange.End.Format(dateFormat))
 	fmt.Printf("  Invocations:  %d\n", rpt.TotalStats.InvocationCount)
-	fmt.Printf("  Input tokens: %d\n", rpt.TotalStats.InputTokens)
+	fmt.Printf("  Input tokens: %d (cache read: %d, cache write: %d)\n",
+		rpt.TotalStats.InputTokens, rpt.TotalStats.CacheReadTokens, rpt.TotalStats.CacheWriteTokens)
 	fmt.Printf("  Output tokens: %d\n", rpt.TotalStats.OutputTokens)
 	fmt.Printf("  Errors:       %d\n", rpt.TotalStats.ErrorCount)
 	fmt.Printf("  Days:         %d\n", len(rpt.Days))

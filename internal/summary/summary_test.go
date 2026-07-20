@@ -60,6 +60,31 @@ func TestSummarizeSingleLog(t *testing.T) {
 	}
 }
 
+// Cache read/write counters aggregate into the day and total stats alongside
+// the plain token counts.
+func TestSummarizeCacheTokenTotals(t *testing.T) {
+	ts := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	arn := "arn:aws:iam::123:user/alice"
+	rec1 := makeLog("claude-3", arn, ts, 100, 200)
+	rec1.Input.CacheRead = 40
+	rec1.Input.CacheWrite = 15
+	rec2 := makeLog("claude-3", arn, ts.Add(time.Minute), 50, 60)
+	rec2.Input.CacheRead = 5
+
+	rpt := Summarize([]model.Record{rec1, rec2})
+
+	if rpt.TotalStats.CacheReadTokens != 45 || rpt.TotalStats.CacheWriteTokens != 15 {
+		t.Errorf("total cache tokens = %d/%d, want 45/15",
+			rpt.TotalStats.CacheReadTokens, rpt.TotalStats.CacheWriteTokens)
+	}
+	if len(rpt.Days) != 1 {
+		t.Fatalf("expected 1 day, got %d", len(rpt.Days))
+	}
+	if day := rpt.Days[0].Stats; day.CacheReadTokens != 45 || day.CacheWriteTokens != 15 {
+		t.Errorf("day cache tokens = %d/%d, want 45/15", day.CacheReadTokens, day.CacheWriteTokens)
+	}
+}
+
 // Two invocations within the gap threshold should form a single conversation.
 func TestConversationGroupingWithinGap(t *testing.T) {
 	base := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)

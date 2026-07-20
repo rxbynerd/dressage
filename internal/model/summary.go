@@ -20,14 +20,19 @@ type DateRange struct {
 	End   time.Time
 }
 
-// Stats holds aggregate statistics.
+// Stats holds aggregate statistics. Cache counters follow each provider's own
+// accounting (Anthropic/Bedrock report them alongside InputTokens; OpenAI and
+// Gemini report cache reads as a subset of the prompt count), so they are
+// carried as separate totals rather than folded into InputTokens.
 type Stats struct {
-	InvocationCount int
-	InputTokens     int64
-	OutputTokens    int64
-	ErrorCount      int
-	ModelBreakdown  map[string]int
-	OpBreakdown     map[string]int
+	InvocationCount  int
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	ErrorCount       int
+	ModelBreakdown   map[string]int
+	OpBreakdown      map[string]int
 }
 
 // DaySummary holds the summary for a single day.

@@ -28,7 +28,10 @@ import (
 // model_breakdown / op_breakdown maps and each conversation entry gained
 // display_id. All additive — a 1.x consumer that ignores unknown fields is
 // unaffected.
-const SchemaVersion = "dressage.ir/1.2"
+// 1.3: the manifest totals and each conversation entry gained
+// cache_read_tokens / cache_write_tokens, mirroring the per-conversation stats
+// block. Additive.
+const SchemaVersion = "dressage.ir/1.3"
 
 // Values of Manifest.RawBodies.
 const (
@@ -88,32 +91,36 @@ type ManifestDateRng struct {
 // whole run; both are always non-nil objects (empty for a zero-conversation
 // run) so a consumer never has to distinguish {} from null.
 type ManifestTotals struct {
-	Conversations  int            `json:"conversations"`
-	Invocations    int            `json:"invocations"`
-	InputTokens    int64          `json:"input_tokens"`
-	OutputTokens   int64          `json:"output_tokens"`
-	Errors         int            `json:"errors"`
-	ModelBreakdown map[string]int `json:"model_breakdown"`
-	OpBreakdown    map[string]int `json:"op_breakdown"`
+	Conversations    int            `json:"conversations"`
+	Invocations      int            `json:"invocations"`
+	InputTokens      int64          `json:"input_tokens"`
+	OutputTokens     int64          `json:"output_tokens"`
+	CacheReadTokens  int64          `json:"cache_read_tokens"`
+	CacheWriteTokens int64          `json:"cache_write_tokens"`
+	Errors           int            `json:"errors"`
+	ModelBreakdown   map[string]int `json:"model_breakdown"`
+	OpBreakdown      map[string]int `json:"op_breakdown"`
 }
 
 // ManifestEntry is one conversation's index entry: enough to triage, shard, and
 // locate the full conversation file without opening it.
 type ManifestEntry struct {
-	ID              string    `json:"id"`
-	DisplayID       string    `json:"display_id"` // human-friendly conv-YYYYMMDD-N label (run-order-dependent; not a stable key)
-	File            string    `json:"file"`
-	Provider        string    `json:"provider"`
-	ModelID         string    `json:"model_id"`
-	SessionID       string    `json:"session_id,omitempty"`
-	StartTime       time.Time `json:"start_time"`
-	EndTime         time.Time `json:"end_time"`
-	TurnCount       int       `json:"turn_count"`
-	InvocationCount int       `json:"invocation_count"`
-	InputTokens     int64     `json:"input_tokens"`
-	OutputTokens    int64     `json:"output_tokens"`
-	ErrorCount      int       `json:"error_count"`
-	Reconstructed   bool      `json:"reconstructed"`
+	ID               string    `json:"id"`
+	DisplayID        string    `json:"display_id"` // human-friendly conv-YYYYMMDD-N label (run-order-dependent; not a stable key)
+	File             string    `json:"file"`
+	Provider         string    `json:"provider"`
+	ModelID          string    `json:"model_id"`
+	SessionID        string    `json:"session_id,omitempty"`
+	StartTime        time.Time `json:"start_time"`
+	EndTime          time.Time `json:"end_time"`
+	TurnCount        int       `json:"turn_count"`
+	InvocationCount  int       `json:"invocation_count"`
+	InputTokens      int64     `json:"input_tokens"`
+	OutputTokens     int64     `json:"output_tokens"`
+	CacheReadTokens  int64     `json:"cache_read_tokens"`
+	CacheWriteTokens int64     `json:"cache_write_tokens"`
+	ErrorCount       int       `json:"error_count"`
+	Reconstructed    bool      `json:"reconstructed"`
 }
 
 // ConversationIR is a complete, self-contained conversation IR, written to

@@ -230,13 +230,15 @@ func ConversationCount(report *model.Report) int {
 // aliased) and always non-nil so an empty run serializes {} rather than null.
 func mapTotals(stats model.Stats, conversations int) ManifestTotals {
 	return ManifestTotals{
-		Conversations:  conversations,
-		Invocations:    stats.InvocationCount,
-		InputTokens:    stats.InputTokens,
-		OutputTokens:   stats.OutputTokens,
-		Errors:         stats.ErrorCount,
-		ModelBreakdown: copyCountMap(stats.ModelBreakdown),
-		OpBreakdown:    copyCountMap(stats.OpBreakdown),
+		Conversations:    conversations,
+		Invocations:      stats.InvocationCount,
+		InputTokens:      stats.InputTokens,
+		OutputTokens:     stats.OutputTokens,
+		CacheReadTokens:  stats.CacheReadTokens,
+		CacheWriteTokens: stats.CacheWriteTokens,
+		Errors:           stats.ErrorCount,
+		ModelBreakdown:   copyCountMap(stats.ModelBreakdown),
+		OpBreakdown:      copyCountMap(stats.OpBreakdown),
 	}
 }
 

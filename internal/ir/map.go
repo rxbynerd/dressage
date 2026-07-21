@@ -65,19 +65,21 @@ func mapSidechains(threads []model.Thread) []SidechainIR {
 // path; see sanitizeFilename).
 func mapEntry(conv ConversationIR, file string) ManifestEntry {
 	entry := ManifestEntry{
-		ID:              conv.ID,
-		DisplayID:       conv.DisplayID,
-		File:            file,
-		Provider:        conv.Provider,
-		ModelID:         conv.ModelID,
-		SessionID:       conv.SessionID,
-		StartTime:       conv.StartTime,
-		EndTime:         conv.EndTime,
-		InvocationCount: conv.Stats.InvocationCount,
-		InputTokens:     conv.Stats.InputTokens,
-		OutputTokens:    conv.Stats.OutputTokens,
-		ErrorCount:      conv.Stats.ErrorCount,
-		Reconstructed:   conv.Conversation != nil,
+		ID:               conv.ID,
+		DisplayID:        conv.DisplayID,
+		File:             file,
+		Provider:         conv.Provider,
+		ModelID:          conv.ModelID,
+		SessionID:        conv.SessionID,
+		StartTime:        conv.StartTime,
+		EndTime:          conv.EndTime,
+		InvocationCount:  conv.Stats.InvocationCount,
+		InputTokens:      conv.Stats.InputTokens,
+		OutputTokens:     conv.Stats.OutputTokens,
+		CacheReadTokens:  conv.Stats.CacheReadTokens,
+		CacheWriteTokens: conv.Stats.CacheWriteTokens,
+		ErrorCount:       conv.Stats.ErrorCount,
+		Reconstructed:    conv.Conversation != nil,
 	}
 	if conv.Conversation != nil {
 		entry.TurnCount = len(conv.Conversation.Turns)

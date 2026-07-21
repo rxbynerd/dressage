@@ -383,6 +383,8 @@ func computeStats(records []model.Record) model.Stats {
 	for _, rec := range records {
 		s.InputTokens += rec.Input.TokenCount
 		s.OutputTokens += rec.Output.TokenCount
+		s.CacheReadTokens += rec.Input.CacheRead
+		s.CacheWriteTokens += rec.Input.CacheWrite
 		if rec.ErrorCode != "" {
 			s.ErrorCount++
 		}
@@ -397,6 +399,8 @@ func mergeStats(dst, src *model.Stats) {
 	dst.InvocationCount += src.InvocationCount
 	dst.InputTokens += src.InputTokens
 	dst.OutputTokens += src.OutputTokens
+	dst.CacheReadTokens += src.CacheReadTokens
+	dst.CacheWriteTokens += src.CacheWriteTokens
 	dst.ErrorCount += src.ErrorCount
 	for k, v := range src.ModelBreakdown {
 		dst.ModelBreakdown[k] += v

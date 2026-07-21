@@ -14,8 +14,9 @@
     {{if .Conversation}}<div>Turns: <span>{{len .Conversation.Turns}}</span></div>{{end}}
     <div>Invocations: <span>{{.Stats.InvocationCount}}</span></div>
     <div>In: <span>{{formatInt .Stats.InputTokens}}</span></div>
-    <div>Out: <span>{{formatInt .Stats.OutputTokens}}</span></div>
     {{if gt .Stats.CacheReadTokens 0}}<div>Cache-read: <span>{{formatInt .Stats.CacheReadTokens}}</span></div>{{end}}
+    {{if gt .Stats.CacheWriteTokens 0}}<div>Cache-write: <span>{{formatInt .Stats.CacheWriteTokens}}</span></div>{{end}}
+    <div>Out: <span>{{formatInt .Stats.OutputTokens}}</span></div>
     {{if gt .Stats.ErrorCount 0}}<div>Errors: <span style="color:var(--error)">{{.Stats.ErrorCount}}</span></div>{{end}}
     <div>{{.StartTime.Format "2006-01-02 15:04:05"}} &ndash; {{.EndTime.Format "15:04:05"}}</div>
   </div>

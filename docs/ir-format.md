@@ -69,7 +69,7 @@ opening any JSON.
 ## Schema version
 
 Every file embeds `schema_version`, a string of the form
-`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.2`.
+`"dressage.ir/MAJOR.MINOR"`. This document describes `dressage.ir/1.3`.
 
 - Additive, backward-compatible changes (new optional fields, new block types)
   bump **MINOR**.
@@ -78,6 +78,10 @@ Every file embeds `schema_version`, a string of the form
 
 Version history:
 
+- **1.3** — the manifest's `totals` and each `conversations[]` index entry
+  gained `cache_read_tokens` / `cache_write_tokens`, mirroring the
+  per-conversation `stats` block, so cache accounting is available at every
+  aggregation level without opening conversation files. Additive.
 - **1.2** — reconstructed **sidechains** (subagent threads) are now carried in
   each conversation file (`conversation.sidechains[]`), so a consumer renders
   subagents without joining `turns.parquet`; the manifest's `totals` gained
@@ -136,7 +140,7 @@ yourself.
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.2"`. |
+| `schema_version` | string | `"dressage.ir/1.3"`. |
 | `generated_at` | timestamp | When the report was produced. |
 | `tool` | object | `{ "name": "dressage", "version": "<build version>" }`. |
 | `source` | object | Run provenance (below). |
@@ -161,6 +165,8 @@ yourself.
 | `invocations` | integer | |
 | `input_tokens` | integer | |
 | `output_tokens` | integer | |
+| `cache_read_tokens` | integer | Summed per each provider's own accounting: Anthropic/Bedrock report cache tokens alongside `input_tokens`; OpenAI/Gemini report cache reads as a subset of the prompt count. |
+| `cache_write_tokens` | integer | `0` for providers without a cache-write counter (OpenAI, Gemini). |
 | `errors` | integer | |
 | `model_breakdown` | object | Map of `model_id` → invocation count across the run. Always a concrete object (`{}` for an empty run). |
 | `op_breakdown` | object | Map of operation name → invocation count across the run. Always a concrete object. |
@@ -181,6 +187,8 @@ yourself.
 | `invocation_count` | integer | Underlying request/response pairs. |
 | `input_tokens` | integer | |
 | `output_tokens` | integer | |
+| `cache_read_tokens` | integer | Same semantics as the `totals` fields. |
+| `cache_write_tokens` | integer | Same semantics as the `totals` fields. |
 | `error_count` | integer | |
 | `reconstructed` | boolean | `false` when `conversation` is `null`. |
 
@@ -190,7 +198,7 @@ Top-level fields:
 
 | Field | Type | Notes |
 |---|---|---|
-| `schema_version` | string | `"dressage.ir/1.2"`. |
+| `schema_version` | string | `"dressage.ir/1.3"`. |
 | `id` | string | Stable id (matches the file name and the manifest entry). |
 | `display_id` | string | Human-friendly `conv-…` label (run-order dependent; not a stable key). |
 | `session_id` | string | Omitted when absent. |
